@@ -1,0 +1,8 @@
+⨯ Another next dev server is already running.
+
+- Local:        http://localhost:3108
+- PID:          5456
+- Dir:          C:\laragon\www\contract-explainer-ai
+- Log:          .next\dev\logs\next-development.log
+
+Run taskkill /PID 5456 /F to stop it.
