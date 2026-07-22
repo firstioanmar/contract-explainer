@@ -22,6 +22,10 @@ function getStreamErrorMessage(error: Error) {
     return "Layanan AI belum dikonfigurasi. Tambahkan OPENROUTER_API_KEY untuk mengaktifkannya.";
   }
 
+  if (message.includes("504") || message.includes("timeout") || message.includes("function_invocation_timeout")) {
+    return "Model gratis membutuhkan waktu lebih lama dari biasanya. Coba lagi; sistem akan memilih model cadangan secara otomatis.";
+  }
+
   return "Terjadi kendala saat menghubungi layanan AI. Silakan coba lagi.";
 }
 
@@ -119,7 +123,15 @@ export function useContractAnalyzer() {
 
       try {
         const response = await fetch("/api/extract", { method: "POST", body: formData });
-        const payload = await response.json() as { text?: string; error?: string; warning?: string | null };
+        const responseText = await response.text();
+        let payload: { text?: string; error?: string; warning?: string | null } = {};
+        try {
+          payload = JSON.parse(responseText) as typeof payload;
+        } catch {
+          payload.error = response.status === 504
+            ? "Ekstraksi dokumen melewati batas waktu. Coba file yang lebih kecil atau tempelkan teksnya."
+            : "Server tidak mengembalikan respons dokumen yang valid.";
+        }
         if (!response.ok || !payload.text) {
           clearProgress();
           setState(response.status === 422 ? "invalid" : "error");

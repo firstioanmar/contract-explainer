@@ -20,15 +20,16 @@ export function ResultActions({ result }: { result: ContractResult }) {
     window.setTimeout(() => setSaved(false), 1800);
   }
 
+  if (!user) return null;
+
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button variant="outline" size="sm" onClick={saveResult} disabled={!user} title={user ? "Simpan hasil di perangkat ini" : "Masuk dengan Google untuk menyimpan"}>
+      <Button variant="outline" size="sm" onClick={saveResult} title="Simpan hasil di perangkat ini">
         {saved ? <Check /> : <Save />} {saved ? "Tersimpan" : "Simpan"}
       </Button>
-      <Button variant="outline" size="sm" onClick={() => user && downloadAnalysisPdf(result)} disabled={!user} title={user ? "Unduh laporan PDF" : "Masuk dengan Google untuk mengunduh PDF"}>
+      <Button variant="outline" size="sm" onClick={() => downloadAnalysisPdf(result)} title="Unduh laporan PDF">
         <Download /> PDF
       </Button>
-      {!user && <span className="w-full text-[9px] text-muted-foreground">Masuk dengan Google untuk menyimpan dan mengunduh.</span>}
     </div>
   );
 }

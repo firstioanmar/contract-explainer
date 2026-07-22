@@ -5,7 +5,7 @@ import { FALLBACK_ANALYSIS_MODELS, PRIMARY_ANALYSIS_MODEL } from "@/lib/ai/model
 import { analyzeRequestSchema, contractAnalysisSchema } from "@/lib/contract-schema";
 import { checkRateLimit, getClientIp, rateLimitHeaders } from "@/lib/rate-limit";
 
-export const maxDuration = 45;
+export const maxDuration = 300;
 
 function jsonError(message: string, status: number, headers?: HeadersInit) {
   return Response.json({ error: message }, { status, headers });

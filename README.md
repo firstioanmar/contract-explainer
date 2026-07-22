@@ -2,6 +2,8 @@
 
 Workspace SaaS sederhana untuk mengubah kontrak atau invoice menjadi ringkasan bahasa Indonesia awam, data terstruktur, penalti, klausul yang perlu diwaspadai, dan tindakan berikutnya.
 
+Portfolio project by [firstioanmar](https://github.com/firstioanmar).
+
 **Live:** https://contract-explainer-ai.vercel.app
 
 ## Quick start

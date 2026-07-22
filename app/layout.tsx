@@ -13,6 +13,16 @@ const plusJakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "KontrakJelas — Pahami Kontrak dengan Bahasa Awam",
   description: "Analisis kontrak dan invoice menjadi ringkasan yang mudah dipahami, data penting, dan klausul yang perlu diwaspadai.",
+  applicationName: "KontrakJelas",
+  authors: [{ name: "firstioanmar", url: "https://github.com/firstioanmar" }],
+  creator: "firstioanmar",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icon.png", sizes: "512x512", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -116,7 +116,7 @@ export function createAnalysisPdf(result: ContractResult) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(105, 113, 130);
-    doc.text("Hasil AI untuk pemahaman awal - bukan nasihat hukum.", margin, pageHeight - 8);
+    doc.text("KontrakJelas by firstioanmar - hasil AI, bukan nasihat hukum.", margin, pageHeight - 8);
     doc.text(`Halaman ${page} dari ${pageCount}`, pageWidth - margin, pageHeight - 8, { align: "right" });
   }
 

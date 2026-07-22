@@ -10,7 +10,7 @@ import {
 import { validateDocumentInput } from "@/lib/document-validation";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 async function extractPdf(buffer: Buffer) {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
