@@ -1,6 +1,38 @@
 export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_EXTRACTED_CHARACTERS = 60_000;
 
+/** Di bawah ini teks dianggap terlalu sedikit untuk dianalisis. */
+export const MIN_MEANINGFUL_CHARACTERS = 80;
+
+/**
+ * Di bawah rata-rata karakter per halaman ini, PDF hampir pasti hasil scan atau
+ * foto walau masih ada sisa teks (watermark, metadata, header). Ambang dipasang
+ * rendah agar kontrak asli yang ringkas tidak salah ditandai; halaman kontrak
+ * berbasis teks selalu jauh di atas angka ini.
+ */
+const MIN_CHARACTERS_PER_PAGE = 50;
+
+/**
+ * Pesan yang menuntun pengguna saat PDF tidak punya lapisan teks. Bukan sekadar
+ * menolak: memberi tiga jalan keluar gratis yang bisa langsung ditempuh.
+ */
+export const SCANNED_PDF_GUIDANCE =
+  "PDF ini sepertinya hasil scan atau foto, sehingga tidak ada teks yang bisa dibaca otomatis. Tiga cara mudah: (1) salin dan tempel langsung isi kontraknya ke kolom teks di atas; (2) buka file di Google Docs — teksnya akan dikenali otomatis, lalu salin ke sini; atau (3) simpan ulang sebagai PDF berbasis teks atau DOCX.";
+
+/** Pesan saat dokumen terbaca tetapi isinya tidak cukup untuk dianalisis. */
+export const INSUFFICIENT_TEXT_GUIDANCE =
+  "Dokumen terbaca tetapi isinya terlalu sedikit untuk dianalisis. Pastikan file memuat teks kontrak, bukan hanya gambar, sampul, atau tabel kosong.";
+
+/**
+ * Menandai PDF yang kemungkinan besar hasil scan. Dipisah agar dapat diuji
+ * tanpa memproses file PDF sungguhan.
+ */
+export function looksLikeScannedPdf(textLength: number, pages: number | null): boolean {
+  if (textLength < MIN_MEANINGFUL_CHARACTERS) return true;
+  if (pages !== null && pages > 1 && textLength / pages < MIN_CHARACTERS_PER_PAGE) return true;
+  return false;
+}
+
 export const SUPPORTED_DOCUMENT_FORMATS = [
   {
     extension: ".pdf",

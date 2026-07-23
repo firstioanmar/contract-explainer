@@ -1,12 +1,15 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { Output, streamText } from "ai";
-import { analyzeLongDocument } from "@/lib/ai/analyze-document";
+import { analyzeLongDocument, AnalysisTimeoutError } from "@/lib/ai/analyze-document";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt, normalizeDocumentText } from "@/lib/ai/contract-prompt";
 import { splitDocument } from "@/lib/ai/document-chunks";
 import { FALLBACK_ANALYSIS_MODELS, MAX_OUTPUT_TOKENS, PRIMARY_ANALYSIS_MODEL } from "@/lib/ai/models";
 import { analyzeRequestSchema, contractAnalysisSchema } from "@/lib/contract-schema";
 import { checkRateLimit, getClientIp, rateLimitHeaders } from "@/lib/rate-limit";
 
+// Batas yang diminta ke platform. Vercel Hobby tetap membatasi 60 detik apa pun
+// nilainya; batas waktu efektif diatur oleh ANALYSIS_TIME_BUDGET_SECONDS agar
+// server sempat mengembalikan pesan jujur sebelum fungsi dimatikan paksa.
 export const maxDuration = 300;
 
 function jsonError(message: string, status: number, headers?: HeadersInit) {
@@ -78,6 +81,17 @@ export async function POST(request: Request) {
 
       return jsonStream(analysis, headers);
     } catch (error) {
+      // Kehabisan waktu: sampaikan jujur bahwa dokumen tidak dapat dituntaskan,
+      // jangan menyajikan analisis yang diam-diam kehilangan sebagian isi.
+      if (error instanceof AnalysisTimeoutError) {
+        console.warn(`Long document timed out: ${error.completedChunks}/${error.totalChunks} bagian selesai`);
+        return jsonError(
+          "Dokumen ini terlalu panjang untuk dituntaskan dalam batas waktu yang tersedia, sehingga analisisnya tidak dapat diselesaikan sepenuhnya. Untuk hasil yang andal, analisis satu bagian terpenting saja (misalnya pasal pembayaran, denda, dan pengakhiran), atau pisahkan dokumen menjadi beberapa bagian yang lebih pendek lalu analisis satu per satu.",
+          504,
+          headers,
+        );
+      }
+
       console.error("Long document analysis failed", error instanceof Error ? error.message : "UnknownError");
       return jsonError("Seluruh model gratis gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
     }

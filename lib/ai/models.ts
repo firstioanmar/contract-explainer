@@ -34,6 +34,20 @@ export const CHUNK_OVERLAP_LINES = 6;
 
 export const MAX_OUTPUT_TOKENS = 3_500;
 
+/**
+ * Anggaran waktu untuk menuntaskan analisis dokumen panjang. Sengaja dipasang
+ * lebih kecil daripada batas waktu platform, supaya server sempat mengirim
+ * pesan yang jujur sebelum fungsi dimatikan paksa oleh platform.
+ *
+ * Setel ANALYSIS_TIME_BUDGET_SECONDS sesuai batas hosting:
+ * - Vercel Hobby (batas 60 detik): biarkan default 52.
+ * - Vercel Pro (batas 300 detik): setel 290 agar dokumen besar sempat selesai.
+ */
+export const ANALYSIS_TIME_BUDGET_MS = Math.max(
+  15_000,
+  (Number(process.env.ANALYSIS_TIME_BUDGET_SECONDS) || 52) * 1_000,
+);
+
 /** Daftar model yang dicoba untuk satu bagian dokumen, dimulai dari offset tertentu. */
 export function modelRotation(offset: number): AnalysisModel[] {
   const size = ANALYSIS_MODELS.length;

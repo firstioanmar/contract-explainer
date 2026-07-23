@@ -143,7 +143,7 @@ export function InputPanel({
                 )}
                 <div id="upload-help" className="mt-3 rounded-xl border border-primary/10 bg-primary/[.035] px-3.5 py-3 text-[10px] leading-5 text-muted-foreground">
                   <p><strong className="text-foreground">Jenis dokumen:</strong> {SUPPORTED_DOCUMENT_TYPES.join(", ")}.</p>
-                  <p className="mt-1"><strong className="text-foreground">Format:</strong> PDF berbasis teks dan DOCX. PDF scan/foto serta DOC lama belum didukung.</p>
+                  <p className="mt-1"><strong className="text-foreground">Format:</strong> PDF berbasis teks dan DOCX. Untuk PDF scan/foto atau DOC lama, salin isinya lalu tempel di tab <strong className="text-foreground">Tempel Teks</strong>.</p>
                 </div>
                 {fileError && <p id="upload-error" role="alert" className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-rose-600"><AlertCircle className="mt-0.5 size-3.5 shrink-0" />{fileError}</p>}
               </TabsContent>

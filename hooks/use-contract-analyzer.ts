@@ -11,8 +11,29 @@ import { mockResult, sampleContract } from "@/lib/mock-contract";
 
 export type AnalysisMode = "text" | "upload";
 
+const TIMEOUT_MESSAGE = "Dokumen terlalu panjang untuk dituntaskan dalam batas waktu yang tersedia, sehingga analisisnya tidak dapat diselesaikan. Coba analisis satu bagian terpenting saja, atau pisahkan dokumen menjadi bagian yang lebih pendek lalu analisis satu per satu.";
+
 function getStreamErrorMessage(error: Error) {
-  const message = error.message.toLowerCase();
+  // useObject melempar Error yang pesannya adalah body respons apa adanya. Jika
+  // server mengirim {"error": "..."}, tampilkan pesan itu supaya penjelasan
+  // jujur dari server sampai ke pengguna tanpa dipetakan ulang.
+  const body = error.message.trim();
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.length > 0) {
+      return parsed.error;
+    }
+  } catch {
+    // Bukan JSON: kemungkinan pesan mentah dari platform. Cocokkan kata kunci.
+  }
+
+  const message = body.toLowerCase();
+
+  // Vercel mematikan fungsi yang melewati batas dengan body non-JSON berisi
+  // FUNCTION_INVOCATION_TIMEOUT. Tetap beri pesan yang jujur.
+  if (message.includes("504") || message.includes("timeout") || message.includes("function_invocation_timeout")) {
+    return TIMEOUT_MESSAGE;
+  }
 
   if (message.includes("429")) {
     return "Batas analisis tercapai. Tunggu satu menit lalu coba lagi.";
@@ -20,10 +41,6 @@ function getStreamErrorMessage(error: Error) {
 
   if (message.includes("503")) {
     return "Layanan AI belum dikonfigurasi. Tambahkan OPENROUTER_API_KEY untuk mengaktifkannya.";
-  }
-
-  if (message.includes("504") || message.includes("timeout") || message.includes("function_invocation_timeout")) {
-    return "Model gratis membutuhkan waktu lebih lama dari biasanya. Coba lagi; sistem akan memilih model cadangan secara otomatis.";
   }
 
   return "Terjadi kendala saat menghubungi layanan AI. Silakan coba lagi.";

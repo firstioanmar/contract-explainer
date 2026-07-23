@@ -1,10 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AnalysisTimeoutError, resolveAnalysisOutcome } from "../lib/ai/analyze-document";
 import { buildContractPrompt } from "../lib/ai/contract-prompt";
-import { splitDocument } from "../lib/ai/document-chunks";
+import { splitDocument, type DocumentChunk } from "../lib/ai/document-chunks";
 import { mergeAnalyses } from "../lib/ai/merge-analysis";
 import { ANALYSIS_MODELS, modelRotation } from "../lib/ai/models";
 import type { ContractAnalysis } from "../lib/contract-schema";
+
+function chunkStubs(count: number): DocumentChunk[] {
+  return Array.from({ length: count }, (_, index) => ({
+    index: index + 1,
+    total: count,
+    startLine: index * 10 + 1,
+    endLine: index * 10 + 10,
+    text: `bagian ${index + 1}`,
+  }));
+}
 
 function makeDocument(lines: number) {
   return Array.from({ length: lines }, (_, index) => `Pasal ${index + 1} berisi ketentuan pelaksanaan pekerjaan.`)
@@ -156,6 +167,48 @@ test("penggabungan membuang klausul dan temuan yang berulang antar bagian", () =
 
   assert.equal(merged.klausulWaspada.length, 1);
   assert.equal(merged.temuanUtama.length, 1);
+});
+
+test("kehabisan waktu dengan bagian belum selesai dilaporkan jujur, bukan disajikan sebagian", () => {
+  const chunks = chunkStubs(3);
+  const results = [baseAnalysis(), null, null];
+
+  assert.throws(
+    () => resolveAnalysisOutcome(chunks, results, true),
+    (error: unknown) => {
+      assert.ok(error instanceof AnalysisTimeoutError);
+      assert.equal(error.completedChunks, 1);
+      assert.equal(error.totalChunks, 3);
+      return true;
+    },
+  );
+});
+
+test("kegagalan model sebagian tetap menghasilkan analisis dengan mencatat bagian gagal", () => {
+  const chunks = chunkStubs(3);
+  const results = [baseAnalysis({ judulDokumen: "Bagian A" }), null, baseAnalysis({ judulDokumen: "Bagian C" })];
+
+  const { analysis, failedChunks } = resolveAnalysisOutcome(chunks, results, false);
+
+  assert.equal(analysis.isValidDocument, true);
+  assert.deepEqual(failedChunks, [2]);
+});
+
+test("selesai tepat sebelum batas waktu tetap disajikan penuh", () => {
+  const chunks = chunkStubs(2);
+  const results = [baseAnalysis(), baseAnalysis()];
+
+  const { failedChunks } = resolveAnalysisOutcome(chunks, results, true);
+  assert.deepEqual(failedChunks, []);
+});
+
+test("seluruh model gagal melempar galat biasa, bukan galat kehabisan waktu", () => {
+  const chunks = chunkStubs(2);
+
+  assert.throws(
+    () => resolveAnalysisOutcome(chunks, [null, null], false),
+    (error: unknown) => error instanceof Error && !(error instanceof AnalysisTimeoutError),
+  );
 });
 
 test("hasil gabungan tetap lolos schema dan batas maksimum", () => {

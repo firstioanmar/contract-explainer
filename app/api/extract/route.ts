@@ -2,8 +2,12 @@ import mammoth from "mammoth";
 import { extractText, getDocumentProxy } from "unpdf";
 import {
   hasValidFileSignature,
+  INSUFFICIENT_TEXT_GUIDANCE,
+  looksLikeScannedPdf,
   MAX_EXTRACTED_CHARACTERS,
+  MIN_MEANINGFUL_CHARACTERS,
   normalizeExtractedText,
+  SCANNED_PDF_GUIDANCE,
   validateDocumentFile,
   type SupportedDocumentFormat,
 } from "@/lib/document-file";
@@ -56,12 +60,14 @@ export async function POST(request: Request) {
       : await extractDocx(buffer);
     const normalized = normalizeExtractedText(extracted.text);
 
-    if (normalized.length < 80) {
-      return Response.json({
-        error: validation.format === "pdf"
-          ? "Teks tidak terbaca. PDF hasil scan atau foto belum didukung; gunakan PDF berbasis teks atau DOCX."
-          : "Dokumen tidak berisi cukup teks untuk dianalisis.",
-      }, { status: 422 });
+    // PDF hasil scan tidak punya lapisan teks (atau nyaris kosong per halaman).
+    // Alih-alih meneruskan teks sampah ke model, pandu pengguna ke jalan keluar.
+    if (validation.format === "pdf" && looksLikeScannedPdf(normalized.length, extracted.pages)) {
+      return Response.json({ error: SCANNED_PDF_GUIDANCE }, { status: 422 });
+    }
+
+    if (normalized.length < MIN_MEANINGFUL_CHARACTERS) {
+      return Response.json({ error: INSUFFICIENT_TEXT_GUIDANCE }, { status: 422 });
     }
 
     const localValidation = validateDocumentInput(normalized);
