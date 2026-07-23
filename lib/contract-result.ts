@@ -1,6 +1,15 @@
 import type { ContractAnalysis } from "@/lib/contract-schema";
 import type { ContractResult } from "@/lib/contract-types";
 
+/**
+ * Dokumen dikirim ke model dengan penanda baris "L12| " agar sumber bisa
+ * diverifikasi. Model kecil kadang ikut menyalin penanda itu ke dalam kutipan,
+ * jadi penanda dibersihkan sebelum ditampilkan.
+ */
+function stripLineMarkers(text: string) {
+  return text.replace(/L\d+\|\s*/g, "").trim();
+}
+
 export function toContractResult(analysis: ContractAnalysis): ContractResult {
   const partiesSource = analysis.pihak[0]?.sumber ?? "Dokumen";
 
@@ -53,7 +62,7 @@ export function toContractResult(analysis: ContractAnalysis): ContractResult {
       title: clause.judul,
       severity: clause.tingkat,
       reason: clause.alasan,
-      quote: clause.kutipan,
+      quote: stripLineMarkers(clause.kutipan),
       source: clause.sumber,
     })),
     actions: analysis.tindakanDisarankan.map((action) => ({
