@@ -132,6 +132,31 @@ test("penggabungan memilih nilai kontrak terbesar, bukan subtotal", () => {
   assert.equal(merged.nilaiKontrak?.sumber, "Baris 8");
 });
 
+test("penggabungan tidak membandingkan nilai dari mata uang yang berbeda", () => {
+  const merged = mergeAnalyses([
+    baseAnalysis({
+      nilaiKontrak: { nilai: 75_000_000, mataUang: "IDR", tampilan: "Rp75.000.000", sumber: "Baris 6" },
+    }),
+    baseAnalysis({
+      nilaiKontrak: { nilai: 250_000, mataUang: "USD", tampilan: "USD 250,000", sumber: "Baris 80" },
+    }),
+  ]);
+
+  assert.equal(merged.nilaiKontrak?.mataUang, "IDR");
+  assert.equal(merged.nilaiKontrak?.sumber, "Baris 6");
+});
+
+test("ringkasan gabungan mewakili lebih dari satu bagian dokumen", () => {
+  const merged = mergeAnalyses([
+    baseAnalysis({ ringkasan: "Bagian awal menjelaskan para pihak. Pembayaran dilakukan bertahap." }),
+    baseAnalysis({ ringkasan: "Bagian akhir mengatur pengakhiran. Ada kewajiban pengembalian aset." }),
+  ]);
+
+  assert.match(merged.ringkasan, /Bagian awal/);
+  assert.match(merged.ringkasan, /Bagian akhir/);
+  assert.ok((merged.ringkasan.match(/[.!?]+/g) ?? []).length <= 4);
+});
+
 test("bagian yang menolak dokumen tidak membatalkan hasil bagian lain", () => {
   const merged = mergeAnalyses([
     baseAnalysis({

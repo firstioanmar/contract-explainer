@@ -6,6 +6,11 @@ import { ANALYSIS_MODELS, MAX_OUTPUT_TOKENS } from "../lib/ai/models";
 import { contractAnalysisSchema, type ContractAnalysis } from "../lib/contract-schema";
 import { contractFixtures, nonContractFixture } from "../tests/fixtures/contracts";
 
+const EVALUATION_REQUEST_TIMEOUT_MS = Math.max(
+  10_000,
+  (Number(process.env.EVALUATION_REQUEST_TIMEOUT_SECONDS) || 45) * 1_000,
+);
+
 /** Menormalkan teks agar perbandingan kutipan tidak gagal karena spasi atau tanda baca. */
 function loose(text: string) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -88,6 +93,7 @@ async function main() {
           temperature: 0.1,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           maxRetries: 1,
+          abortSignal: AbortSignal.timeout(EVALUATION_REQUEST_TIMEOUT_MS),
         });
 
         const classified = output.isValidDocument === fixture.expectedValid
@@ -121,7 +127,11 @@ async function main() {
       .join("\n\n")
       .repeat(12);
 
-    const { analysis, chunks, failedChunks, attempts } = await analyzeLongDocument(openrouter, longDocument);
+    const { analysis, chunks, failedChunks, attempts } = await analyzeLongDocument(
+      openrouter,
+      longDocument,
+      Math.min(180_000, EVALUATION_REQUEST_TIMEOUT_MS * 3),
+    );
     const modelsUsed = new Set(attempts.filter((attempt) => attempt.ok).map((attempt) => attempt.model));
 
     longDocumentOk = analysis.isValidDocument && failedChunks.length === 0;

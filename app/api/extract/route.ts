@@ -12,6 +12,7 @@ import {
   type SupportedDocumentFormat,
 } from "@/lib/document-file";
 import { validateDocumentInput } from "@/lib/document-validation";
+import { checkRateLimit, getClientIp, rateLimitHeaders } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -32,6 +33,21 @@ async function extractDocx(buffer: Buffer) {
 }
 
 export async function POST(request: Request) {
+  const rateLimit = checkRateLimit(`extract:${getClientIp(request)}`);
+  const headers = rateLimitHeaders(rateLimit);
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: "Batas ekstraksi dokumen tercapai. Tunggu satu menit lalu coba lagi." },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          "Retry-After": String(Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / 1_000))),
+        },
+      },
+    );
+  }
+
   let formData: FormData;
   try {
     formData = await request.formData();

@@ -39,13 +39,18 @@ export const MAX_OUTPUT_TOKENS = 3_500;
  * lebih kecil daripada batas waktu platform, supaya server sempat mengirim
  * pesan yang jujur sebelum fungsi dimatikan paksa oleh platform.
  *
- * Setel ANALYSIS_TIME_BUDGET_SECONDS sesuai batas hosting:
- * - Vercel Hobby (batas 60 detik): biarkan default 52.
- * - Vercel Pro (batas 300 detik): setel 290 agar dokumen besar sempat selesai.
+ * Vercel Fluid Compute memberi fungsi Node.js hingga 300 detik pada Hobby.
+ * Default 240 detik menyisakan waktu untuk serialisasi dan respons error.
  */
 export const ANALYSIS_TIME_BUDGET_MS = Math.max(
-  15_000,
-  (Number(process.env.ANALYSIS_TIME_BUDGET_SECONDS) || 52) * 1_000,
+  30_000,
+  Math.min(285_000, (Number(process.env.ANALYSIS_TIME_BUDGET_SECONDS) || 240) * 1_000),
+);
+
+/** Dokumen pendek tetap diberi deadline agar model gratis yang antre tidak menggantung tanpa batas. */
+export const SHORT_ANALYSIS_TIME_BUDGET_MS = Math.max(
+  20_000,
+  Math.min(180_000, (Number(process.env.SHORT_ANALYSIS_TIME_BUDGET_SECONDS) || 90) * 1_000),
 );
 
 /** Daftar model yang dicoba untuk satu bagian dokumen, dimulai dari offset tertentu. */

@@ -10,8 +10,32 @@ function stripLineMarkers(text: string) {
   return text.replace(/L\d+\|\s*/g, "").trim();
 }
 
-export function toContractResult(analysis: ContractAnalysis): ContractResult {
+function uniqueReferences(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  return values.filter((value): value is string => {
+    if (!value || value === "Dokumen" || value === "Tidak ditemukan") return false;
+    const key = value.toLocaleLowerCase("id-ID").replace(/\s+/g, " ").trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function toContractResult(
+  analysis: ContractAnalysis,
+  options: { warnings?: string[] } = {},
+): ContractResult {
   const partiesSource = analysis.pihak[0]?.sumber ?? "Dokumen";
+  const sourceReferences = uniqueReferences([
+    ...analysis.pihak.map((party) => party.sumber),
+    analysis.nilaiKontrak?.sumber,
+    analysis.tanggalMulai?.sumber,
+    analysis.tanggalJatuhTempo?.sumber,
+    analysis.durasi?.sumber,
+    ...analysis.penalti.map((penalty) => penalty.sumber),
+    ...analysis.klausulWaspada.map((clause) => clause.sumber),
+    ...analysis.tindakanDisarankan.map((action) => action.sumber),
+  ]);
 
   return {
     title: analysis.judulDokumen,
@@ -69,5 +93,7 @@ export function toContractResult(analysis: ContractAnalysis): ContractResult {
       text: action.tindakan,
       source: action.sumber ?? undefined,
     })),
+    warnings: options.warnings ?? [],
+    sourceReferences,
   };
 }

@@ -19,10 +19,10 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AnalysisState } from "@/lib/contract-types";
-import { MAX_DOCUMENT_BYTES, SUPPORTED_DOCUMENT_TYPES, validateDocumentFile } from "@/lib/document-file";
+import { MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS, SUPPORTED_DOCUMENT_TYPES, validateDocumentFile } from "@/lib/document-file";
 import { cn } from "@/lib/utils";
 
-const MAX_CHARACTERS = 20_000;
+const MAX_CHARACTERS = MAX_EXTRACTED_CHARACTERS;
 
 interface InputPanelProps {
   text: string;

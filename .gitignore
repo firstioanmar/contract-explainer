@@ -18,6 +18,9 @@
 # generated code graph
 /graphify-out/
 
+# temporary PDF renders used for visual verification
+/tmp/pdfs/*.png
+
 # logs
 npm-debug.log*
 yarn-debug.log*
