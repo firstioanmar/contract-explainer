@@ -24,6 +24,7 @@ KontrakJelas telah berpindah dari prototype mock menjadi workspace AI streaming 
 - [x] Penyimpanan maksimal 20 hasil per akun/perangkat dan ekspor PDF.
 - [x] Modal privasi dan ketentuan yang keyboard-friendly.
 - [x] Deployment Vercel dan smoke test URL produksi.
+- [x] Uji prompt injection delapan serangan, mitigasi berlapis, dan hasil terdokumentasi.
 
 ## Keputusan penting
 
@@ -51,12 +52,17 @@ Uji awal menunjukkan beberapa model gratis membentuk field versinya sendiri wala
 
 Google ID token diverifikasi di server dan diubah menjadi cookie sesi HTTP-only. Hasil yang dipilih pengguna disimpan di local storage dengan key berdasarkan `sub` Google, maksimal 20 item. Ini menjaga demo sederhana dan tidak mengirim hasil ke database, tetapi riwayat belum tersinkron antarperangkat.
 
+### Pertahanan peran tidak sama dengan pertahanan data
+
+Uji injection menunjukkan pertahanan yang ada menahan serangan yang meminta model melanggar perannya, tetapi tembus pada serangan yang menyamar sebagai koreksi data — "angka itu salah ketik", "klausul ini rahasia". Model tetap merasa sedang patuh mengekstrak fakta; yang berubah hanya fakta mana yang dianggap benar. Untuk produk yang tugasnya membacakan angka dan denda, kelas serangan kedua justru yang paling merugikan, karena hasilnya tetap terlihat wajar. Rinciannya di [Uji Prompt Injection](UJI-PROMPT-INJECTION.md).
+
 ## Batasan saat ini
 
 - PDF hasil scan/foto belum didukung karena OCR belum tersedia.
 - Riwayat tersimpan hanya pada browser/perangkat yang sama, bukan database lintas perangkat.
 - Rate limit masih in-memory dan tidak dibagi antar-instance serverless.
 - Model gratis dapat memiliki antrean, rate limit, atau ketersediaan yang berubah.
+- Ketahanan injection lapis gratis belum diukur ulang sesudah mitigasi karena kuota harian OpenRouter habis saat pengujian.
 
 ## Langkah berikutnya
 
