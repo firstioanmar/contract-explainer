@@ -24,8 +24,11 @@ Buka `http://localhost:3000`, pilih **Gunakan Contoh**, centang persetujuan, lal
 | `OPENROUTER_API_KEY` | Ya | — | API key server-side dari OpenRouter. |
 | `AUTH_SECRET` | Production | fallback API key hanya saat lokal | Rahasia panjang khusus untuk menandatangani cookie sesi. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Tidak | Client ID KontrakJelas | OAuth client untuk Google Identity Services. |
+| `PAID_FALLBACK_TIER` | Tidak | `murah` | Sejauh mana lapis berbayar menebus kegagalan lapis gratis: `none`, `murah`, atau `andal`. |
 | `ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `240` | Deadline dokumen panjang sebelum batas Vercel Fluid Compute. |
 | `SHORT_ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `90` | Deadline untuk streaming dokumen pendek. |
+| `PER_MODEL_TIMEOUT_SECONDS` | Tidak | `70` | Batas waktu satu model per bagian, agar model yang menggantung tidak memakan jatah model cadangan. |
+| `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `2` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. |
 | `EVALUATION_REQUEST_TIMEOUT_SECONDS` | Tidak | `45` | Deadline per model saat menjalankan evaluasi. |
 
 Key hanya dibaca oleh Route Handler dan tidak dikirim ke browser.
@@ -40,7 +43,7 @@ Google login juga memerlukan **Authorized JavaScript origins** berikut pada OAut
 ```text
 Teks / PDF teks / DOCX → validasi client + server → ekstraksi file
          → POST /api/analyze → rate limit per-IP
-         → OpenRouter + 4 model gratis + timeout dan fallback
+         → OpenRouter: 5 model gratis bergiliran → cadangan berbayar murah
          → streamText/analisis per bagian + Output.object(Zod)
          → metadata kelengkapan → card/tabel bertahap → validasi objek final
 ```
@@ -63,7 +66,47 @@ Evaluasi model dengan tiga format dokumen dan satu input non-kontrak:
 npm run eval:contracts
 ```
 
-Evaluasi ini membutuhkan `OPENROUTER_API_KEY`, tetapi seluruh model dalam daftar fallback memakai suffix `:free` atau router gratis. Ketersediaan dan antrean tetap mengikuti OpenRouter.
+Evaluasi ini membutuhkan `OPENROUTER_API_KEY` dan menguji setiap model dalam daftar aktif satu per satu, termasuk lapis berbayar. Biayanya dicetak di akhir laporan dan berada di kisaran sen. Set `PAID_FALLBACK_TIER=none` bila ingin mengevaluasi lapis gratis saja.
+
+Evaluasi keluar dengan status gagal bila ada model yang tidak lolos satu pun kasus uji. Model seperti itu menempati slot di rantai tanpa pernah menghasilkan apa pun, dan pada dokumen panjang ia hanya memakan anggaran waktu bagian tersebut.
+
+### Evaluasi terjadwal
+
+`.github/workflows/eval-models.yml` menjalankan evaluasi ini setiap Senin 02:00 UTC, juga bisa dipicu manual lewat tab Actions. Ketersediaan model gratis di OpenRouter berubah menurut beban dan kebijakan penyedia, jadi urutan di `lib/ai/models.ts` bisa basi tanpa ada satu baris kode pun yang berubah — jadwal ini yang menemukannya, bukan laporan pengguna.
+
+Saat ada model yang gagal seluruh kasus, workflow membuka satu isu dan menambahkan komentar pada isu yang sama di run berikutnya, alih-alih menumpuk isu baru tiap minggu. Log dan `eval-report.json` selalu tersimpan sebagai artifact selama 90 hari.
+
+Aktifkan dengan menambahkan API key sebagai secret repo:
+
+```bash
+gh secret set OPENROUTER_API_KEY
+```
+
+Catatan: GitHub menonaktifkan workflow terjadwal pada repo yang tidak ada aktivitas selama 60 hari. Bila repo sedang menganggur, jadwalnya perlu diaktifkan kembali dari tab Actions.
+
+## Rantai model
+
+Analisis tidak bergantung pada satu model. Setiap bagian dokumen menempuh rantai berikut sampai ada yang berhasil:
+
+| Lapis | Model | Kapan dipakai | Biaya per bagian |
+|---|---|---|---:|
+| Gratis | `gemma-4-26b`, `nemotron-3-super`, `openrouter/free`, `nemotron-nano-9b` | Selalu dicoba lebih dulu, urutan dirotasi per bagian dokumen | $0 |
+| Murah | `gemini-2.5-flash-lite`, `llama-3.3-70b`, `mistral-small-3.2` | Seluruh model gratis pada giliran itu gagal | ~$0,0006 |
+| Andal | `gemini-3.1-flash-lite` | Hanya bila `PAID_FALLBACK_TIER=andal` | ~$0,0016 |
+
+Rotasi lapis gratis membuat beban tersebar dan tidak ada satu model yang selalu menjadi pintu masuk. Lapis berbayar tidak dirotasi karena tugasnya bukan berbagi beban melainkan menyelamatkan bagian yang gagal secepat mungkin di sisa anggaran waktu. Setiap model dalam rantai mendukung structured output, sehingga schema Zod yang sama berlaku di semua lapis.
+
+Tiap bagian hanya mencoba dua model gratis (`MAX_FREE_ATTEMPTS_PER_CHUNK`), bukan seluruhnya. Mencoba keempatnya menghabiskan sekitar 200 detik dari anggaran 240 detik pada pengukuran nyata, sehingga dokumen dengan beberapa bagian pasti kehabisan waktu. Karena titik awal rotasi bergeser per bagian, keempat model gratis tetap kebagian giliran lintas bagian.
+
+Jalur dokumen pendek adalah pengecualian: hasilnya dialirkan token demi token, dan aliran yang sudah terkirim tidak bisa ditarik kembali. Pergantian model oleh OpenRouter hanya menyala pada galat penyedia, sedangkan keluaran di luar schema baru ketahuan setelah aliran selesai — jadi jalur ini tidak punya kesempatan kedua. Karena itu dokumen pendek dipimpin `gemini-2.5-flash-lite` yang terukur patuh schema dan selesai sekitar 4 detik, dengan biaya ~$0,0006 sekali analisis. Lapis gratis tetap melayani dokumen panjang, tempat kegagalan masih bisa ditebus per bagian.
+
+Isi kedua lapis ditentukan oleh pengukuran, bukan daftar harga atau ukuran model. Beberapa yang tampak menarik di atas kertas dicoret karena gagal pada beban nyata: `gpt-oss-20b:free` gagal di seluruh percobaan padahal sebelumnya menjadi model utama, `qwen3.5-flash` menolak permintaan berschema, `glm-4.7-flash` mengirim keluaran yang tidak dapat diurai, `gpt-5-nano` habis token tanpa menghasilkan objek, dan `gpt-oss-120b` butuh sekitar 80 detik meski lulus.
+
+Tingkat keberhasilan lapis gratis yang terukur: `gemma-4-26b` 3/3, `nemotron-3-super` 2/3, `openrouter/free` 2/3, `nemotron-nano-9b` 1/3, masing-masing 24–64 detik per bagian. Lapis gratis menukar waktu dengan biaya; lapis murah menyelesaikan bagian yang sama dalam 4–17 detik. Ukur ulang dengan `npm run eval:contracts` sebelum menambah atau menukar model.
+
+Setiap model punya batas waktu sendiri (`PER_MODEL_TIMEOUT_SECONDS`). Tanpa itu, satu model gratis yang menggantung menghabiskan seluruh anggaran waktu dan rantai cadangan tidak pernah sempat berjalan.
+
+Log server mencatat berapa bagian yang harus ditebus lapis berbayar beserta perkiraan biayanya. Angka itu adalah ukuran kesehatan lapis gratis: bila terus naik, urutan model perlu ditinjau ulang.
 
 Laporan PDF contoh dapat dibuat dengan:
 

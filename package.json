@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "tsx --test tests/**/*.test.ts",
-    "eval:contracts": "node --env-file=.env.local --import tsx scripts/evaluate-contracts.ts",
+    "eval:contracts": "node --env-file-if-exists=.env.local --import tsx scripts/evaluate-contracts.ts",
     "verify:pdf": "tsx scripts/generate-sample-pdf.ts"
   },
   "dependencies": {

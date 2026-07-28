@@ -4,7 +4,17 @@ import { AnalysisTimeoutError, resolveAnalysisOutcome } from "../lib/ai/analyze-
 import { buildContractPrompt } from "../lib/ai/contract-prompt";
 import { splitDocument, type DocumentChunk } from "../lib/ai/document-chunks";
 import { mergeAnalyses } from "../lib/ai/merge-analysis";
-import { ANALYSIS_MODELS, modelRotation } from "../lib/ai/models";
+import {
+  ANALYSIS_MODELS,
+  FALLBACK_ANALYSIS_MODELS,
+  FREE_MODELS,
+  MAX_FREE_ATTEMPTS_PER_CHUNK,
+  OPENROUTER_MAX_FALLBACK_MODELS,
+  PAID_MODELS,
+  PRIMARY_ANALYSIS_MODEL,
+  STREAMING_MODELS,
+  modelRotation,
+} from "../lib/ai/models";
 import type { ContractAnalysis } from "../lib/contract-schema";
 
 function chunkStubs(count: number): DocumentChunk[] {
@@ -89,14 +99,86 @@ test("nomor baris pada prompt memakai penomoran global dokumen", () => {
   assert.ok(prompt.includes(`BAGIAN ${second.index} DARI ${second.total}`));
 });
 
-test("giliran model berputar dan selalu memuat seluruh model", () => {
+test("giliran model berputar dan tidak pernah mengulang model yang sama", () => {
+  const expected = MAX_FREE_ATTEMPTS_PER_CHUNK + PAID_MODELS.length;
+
   for (let offset = 0; offset < ANALYSIS_MODELS.length + 2; offset += 1) {
     const rotation = modelRotation(offset);
-    assert.equal(rotation.length, ANALYSIS_MODELS.length);
-    assert.equal(new Set(rotation.map((model) => model.id)).size, ANALYSIS_MODELS.length);
+    assert.equal(rotation.length, expected);
+    assert.equal(new Set(rotation.map((model) => model.id)).size, expected, `giliran ${offset} memuat model kembar`);
   }
 
   assert.notEqual(modelRotation(0)[0].id, modelRotation(1)[0].id);
+});
+
+test("rotasi tetap memakai seluruh model gratis lintas bagian dokumen", () => {
+  const seen = new Set<string>();
+  for (let offset = 0; offset < FREE_MODELS.length; offset += 1) {
+    for (const model of modelRotation(offset)) {
+      if (model.tier === "gratis") seen.add(model.id);
+    }
+  }
+
+  // Inti permintaan "bagi beban": tiap bagian hanya mencoba sebagian model
+  // gratis, tetapi lintas bagian seluruhnya tetap kebagian giliran.
+  assert.equal(seen.size, FREE_MODELS.length, "ada model gratis yang tidak pernah kebagian giliran");
+});
+
+test("model gratis selalu dicoba lebih dulu sebelum model berbayar", () => {
+  for (let offset = 0; offset < FREE_MODELS.length + 2; offset += 1) {
+    const rotation = modelRotation(offset);
+    const firstPaid = rotation.findIndex((model) => model.tier !== "gratis");
+
+    if (firstPaid === -1) continue;
+    assert.equal(firstPaid, MAX_FREE_ATTEMPTS_PER_CHUNK, `giliran ${offset} menyentuh lapis berbayar terlalu cepat`);
+    assert.ok(
+      rotation.slice(0, firstPaid).every((model) => model.tier === "gratis"),
+      `giliran ${offset} menyelipkan model berbayar di antara model gratis`,
+    );
+  }
+});
+
+test("jalur streaming dipimpin model yang patuh schema, bukan model gratis", () => {
+  // Aliran yang sudah terkirim tidak bisa ditarik kembali, jadi jalur ini tidak
+  // punya kesempatan kedua dan harus dipimpin model yang paling jarang meleset.
+  if (PAID_MODELS.length === 0) {
+    assert.equal(STREAMING_MODELS[0].tier, "gratis", "tanpa lapis berbayar, jalur ini hanya punya model gratis");
+    return;
+  }
+
+  assert.equal(STREAMING_MODELS[0].id, PAID_MODELS[0].id);
+  assert.equal(
+    new Set(STREAMING_MODELS.map((model) => model.id)).size,
+    PAID_MODELS.length + FREE_MODELS.length,
+    "seluruh model tetap tersedia sebagai cadangan aliran",
+  );
+});
+
+test("daftar cadangan aliran tidak melampaui batas OpenRouter", () => {
+  // OpenRouter menolak daftar lebih dari tiga model, dan penolakannya sampai ke
+  // pengguna sebagai respons kosong. Batas ini harus dijaga uji, bukan ingatan.
+  assert.ok(
+    FALLBACK_ANALYSIS_MODELS.length <= OPENROUTER_MAX_FALLBACK_MODELS,
+    `daftar cadangan ${FALLBACK_ANALYSIS_MODELS.length} model, batas ${OPENROUTER_MAX_FALLBACK_MODELS}`,
+  );
+  assert.ok(
+    !FALLBACK_ANALYSIS_MODELS.includes(PRIMARY_ANALYSIS_MODEL),
+    "model utama tidak perlu diulang di daftar cadangan",
+  );
+});
+
+test("urutan lapis berbayar tetap dari yang termurah di setiap giliran", () => {
+  const paidIds = PAID_MODELS.map((model) => model.id);
+
+  for (let offset = 0; offset < FREE_MODELS.length + 2; offset += 1) {
+    const tail = modelRotation(offset).filter((model) => model.tier !== "gratis").map((model) => model.id);
+    assert.deepEqual(tail, paidIds, `giliran ${offset} mengubah urutan lapis berbayar`);
+  }
+});
+
+test("seluruh model dalam rantai memakai id yang unik", () => {
+  const ids = ANALYSIS_MODELS.map((model) => model.id);
+  assert.equal(new Set(ids).size, ids.length);
 });
 
 test("penggabungan menyatukan pihak tanpa duplikat dan mengambil perhatian tertinggi", () => {

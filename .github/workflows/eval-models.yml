@@ -1,0 +1,86 @@
+name: Evaluasi model
+
+# Ketersediaan model gratis di OpenRouter berubah menurut beban dan kebijakan
+# penyedia, jadi urutan di lib/ai/models.ts bisa basi tanpa ada yang mengubah
+# satu baris kode pun. Jadwal ini yang menemukannya, bukan laporan pengguna.
+on:
+  schedule:
+    # Setiap Senin 02:00 UTC (09:00 WIB).
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+# Menulis isu saat ada model mati. Selebihnya hanya membaca.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: eval-models
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    # Model gratis lambat: tujuh model dikali empat kasus, masing-masing dibatasi
+    # EVALUATION_REQUEST_TIMEOUT_SECONDS, ditambah satu jalur dokumen panjang.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Jalankan evaluasi
+        id: eval
+        continue-on-error: true
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          EVAL_REPORT_PATH: eval-report.json
+        # pipefail wajib eksplisit: tanpa itu status yang terbaca adalah status
+        # tee, selalu nol, sehingga kegagalan evaluasi tidak pernah terdeteksi.
+        run: |
+          set -o pipefail
+          npm run eval:contracts 2>&1 | tee eval-log.txt
+
+      - name: Simpan laporan
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ github.run_number }}
+          path: |
+            eval-log.txt
+            eval-report.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      # Satu isu yang terus diperbarui, bukan isu baru tiap minggu. Evaluasi ini
+      # berjalan berulang, jadi menumpuk isu hanya membuat sinyalnya diabaikan.
+      - name: Laporkan model yang bermasalah
+        if: steps.eval.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Evaluasi model: ada model yang gagal seluruh kasus uji"
+          body=$(printf 'Evaluasi terjadwal menemukan model yang perlu ditinjau di `lib/ai/models.ts`.\n\nRun: %s\n\n```\n%s\n```\n' \
+            "$RUN_URL" "$(tail -40 eval-log.txt)")
+
+          # `// empty` penting: tanpa itu jq mencetak "null" untuk hasil kosong,
+          # dan "null" lolos uji string tidak-kosong sehingga isu baru tidak
+          # pernah dibuat.
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Teruskan status evaluasi
+        if: steps.eval.outcome == 'failure'
+        run: |
+          echo "Evaluasi menemukan model bermasalah. Lihat isu dan artifact." >&2
+          exit 1

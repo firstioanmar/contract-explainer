@@ -76,10 +76,17 @@ export async function POST(request: Request) {
   // bagian selesai, sehingga jalur ini tidak mengalirkan hasil sebagian.
   if (chunks.length > 1) {
     try {
-      const { analysis, chunks: total, failedChunks, attempts } = await analyzeLongDocument(openrouter, normalized);
+      const { analysis, chunks: total, failedChunks, attempts, estimatedCostUsd } =
+        await analyzeLongDocument(openrouter, normalized);
+
+      // Berapa bagian yang harus ditebus lapis berbayar adalah sinyal kesehatan
+      // lapis gratis. Bila angkanya terus naik, urutan model perlu ditinjau.
+      const succeeded = attempts.filter((attempt) => attempt.ok);
+      const paidChunks = succeeded.filter((attempt) => attempt.tier !== "gratis").length;
 
       console.info(
-        `Contract analysis: ${total} bagian, ${attempts.filter((attempt) => attempt.ok).length} berhasil`,
+        `Contract analysis: ${total} bagian, ${succeeded.length} berhasil`,
+        `(${paidChunks} lewat lapis berbayar, ~$${estimatedCostUsd.toFixed(5)})`,
         failedChunks.length > 0 ? `bagian gagal: ${failedChunks.join(", ")}` : "",
       );
 
@@ -109,7 +116,7 @@ export async function POST(request: Request) {
       }
 
       console.error("Long document analysis failed", error instanceof Error ? error.message : "UnknownError");
-      return jsonError("Seluruh model gratis gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
+      return jsonError("Seluruh model AI yang tersedia gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
     }
   }
 
