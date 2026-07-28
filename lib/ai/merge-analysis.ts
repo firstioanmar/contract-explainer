@@ -101,6 +101,33 @@ function highestAttention(values: Attention[]): Attention {
 }
 
 /**
+ * Mengosongkan seluruh data analisis pada hasil yang ditolak.
+ *
+ * Uji prompt injection 28 Juli 2026 menunjukkan model tetap mengisi
+ * klausulWaspada untuk input yang sudah ia tolak sebagai bukan_dokumen, walau
+ * prompt memintanya kosong. UI memang membuang field ini saat isValidDocument
+ * false, jadi tidak ada yang sampai ke pengguna — tetapi mengandalkan pembaca
+ * respons untuk mengingat aturan itu adalah jaminan yang lemah. Ditegakkan di
+ * sini supaya respons API konsisten dengan janjinya sendiri.
+ */
+export function clearRejectedAnalysis(analysis: ContractAnalysis): ContractAnalysis {
+  if (analysis.isValidDocument) return analysis;
+
+  return {
+    ...analysis,
+    pihak: [],
+    nilaiKontrak: null,
+    tanggalMulai: null,
+    tanggalJatuhTempo: null,
+    durasi: null,
+    temuanUtama: [],
+    penalti: [],
+    klausulWaspada: [],
+    tindakanDisarankan: [],
+  };
+}
+
+/**
  * Menggabungkan hasil analisis beberapa bagian dokumen menjadi satu hasil utuh.
  *
  * Penggabungan dilakukan tanpa memanggil model lagi, supaya tidak menambah titik

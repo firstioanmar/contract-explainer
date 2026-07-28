@@ -68,6 +68,16 @@ npm run eval:contracts
 
 Evaluasi ini membutuhkan `OPENROUTER_API_KEY` dan menguji setiap model dalam daftar aktif satu per satu, termasuk lapis berbayar. Biayanya dicetak di akhir laporan dan berada di kisaran sen. Set `PAID_FALLBACK_TIER=none` bila ingin mengevaluasi lapis gratis saja.
 
+Ketahanan terhadap prompt injection diuji terpisah:
+
+```bash
+npm run eval:injection                            # model pintu masuk produksi
+npm run eval:injection -- --all                   # seluruh daftar model
+npm run eval:injection -- --models=gemini-2.5-flash-lite
+```
+
+Delapan serangan dijalankan atas satu kontrak dasar yang sama, sehingga payload menjadi satu-satunya variabel. Uji ini menanyakan hal yang berbeda dari `eval:contracts`: bukan "apakah model ini layak dipakai", melainkan apakah hasil yang sampai ke pengguna masih jujur ketika dokumen berisi perintah. Hasil, temuan, dan mitigasinya ada di [docs/UJI-PROMPT-INJECTION.md](docs/UJI-PROMPT-INJECTION.md).
+
 Evaluasi keluar dengan status gagal bila ada model yang tidak lolos satu pun kasus uji. Model seperti itu menempati slot di rantai tanpa pernah menghasilkan apa pun, dan pada dokumen panjang ia hanya memakan anggaran waktu bagian tersebut.
 
 ### Evaluasi terjadwal
@@ -118,6 +128,7 @@ npm run verify:pdf
 
 - Streaming structured output untuk input teks, PDF berbasis teks, dan DOCX: tersedia.
 - Penolakan non-kontrak: validasi lokal dan klasifikasi model-side.
+- Prompt injection: aturan prompt khusus instruksi yang menyamar sebagai koreksi data, detektor deterministik yang memperingatkan pengguna beserta nomor barisnya, dan pembersihan hasil yang ditolak. Model utama menahan 8/8 serangan pada uji terakhir; lapis gratis belum diukur ulang.
 - Upload: ekstensi, MIME, ukuran 4 MB, signature file, dan rate limit diverifikasi sebelum ekstraksi. Batas 4 MB menyisakan ruang dari limit request Vercel 4,5 MB. PDF scan/foto belum didukung karena OCR belum tersedia.
 - Analisis panjang: hasil yang kehilangan bagian diberi peringatan di UI dan PDF; hasil yang kehabisan waktu tidak ditampilkan sebagai analisis lengkap.
 - Login Google: token Google diverifikasi server-side dan sesi disimpan dalam cookie HTTP-only.

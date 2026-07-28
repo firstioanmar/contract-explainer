@@ -3,6 +3,8 @@ import { Output, streamText } from "ai";
 import { analyzeLongDocument, AnalysisTimeoutError } from "@/lib/ai/analyze-document";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt, normalizeDocumentText } from "@/lib/ai/contract-prompt";
 import { splitDocument } from "@/lib/ai/document-chunks";
+import { buildInjectionWarning, detectInjectionSignals } from "@/lib/ai/injection-detection";
+import { clearRejectedAnalysis } from "@/lib/ai/merge-analysis";
 import {
   FALLBACK_ANALYSIS_MODELS,
   MAX_OUTPUT_TOKENS,
@@ -71,10 +73,24 @@ export async function POST(request: Request) {
   const normalized = normalizeDocumentText(parsed.data.text);
   const chunks = splitDocument(normalized);
 
+  // Dokumen yang memuat teks pengarah hasil tidak boleh dialirkan token demi
+  // token: peringatannya menempel pada _meta, dan _meta hanya bisa dikirim pada
+  // jalur yang mengembalikan objek utuh. Menukar streaming dengan peringatan
+  // adalah pertukaran yang benar di sini — pengguna yang dokumennya sedang
+  // mencoba memanipulasi hasil lebih butuh tahu daripada butuh cepat.
+  const injectionSignals = detectInjectionSignals(normalized);
+  const injectionWarning = buildInjectionWarning(injectionSignals);
+
+  if (injectionSignals.length > 0) {
+    console.warn(
+      `Injection signals: ${injectionSignals.length} baris (${injectionSignals.map((signal) => signal.line).join(", ")})`,
+    );
+  }
+
   // Dokumen panjang dipecah dan dianalisis bagian demi bagian oleh model yang
   // bergiliran, lalu digabungkan. Hasil gabungan baru berarti setelah semua
   // bagian selesai, sehingga jalur ini tidak mengalirkan hasil sebagian.
-  if (chunks.length > 1) {
+  if (chunks.length > 1 || injectionWarning) {
     try {
       const { analysis, chunks: total, failedChunks, attempts, estimatedCostUsd } =
         await analyzeLongDocument(openrouter, normalized);
@@ -90,12 +106,15 @@ export async function POST(request: Request) {
         failedChunks.length > 0 ? `bagian gagal: ${failedChunks.join(", ")}` : "",
       );
 
-      const warnings = failedChunks.length > 0
-        ? [`Analisis selesai sebagian. Bagian ${failedChunks.join(", ")} dari ${total} tidak dapat dibaca oleh model AI dan tidak disertakan dalam hasil.`]
-        : [];
+      const warnings = [
+        ...(injectionWarning ? [injectionWarning] : []),
+        ...(failedChunks.length > 0
+          ? [`Analisis selesai sebagian. Bagian ${failedChunks.join(", ")} dari ${total} tidak dapat dibaca oleh model AI dan tidak disertakan dalam hasil.`]
+          : []),
+      ];
 
       return jsonStream({
-        ...analysis,
+        ...clearRejectedAnalysis(analysis),
         _meta: {
           isPartial: failedChunks.length > 0,
           failedChunks,
