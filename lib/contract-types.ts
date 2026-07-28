@@ -31,4 +31,8 @@ export interface ContractResult {
   penalties: Penalty[];
   risks: RiskClause[];
   actions: { text: string; source?: string }[];
+  /** Peringatan operasional, misalnya dokumen terpotong atau sebagian bagian gagal. */
+  warnings?: string[];
+  /** Referensi nyata yang dikembalikan model; tidak pernah diisi dengan sumber hardcoded. */
+  sourceReferences?: string[];
 }

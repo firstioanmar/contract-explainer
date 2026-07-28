@@ -2,7 +2,7 @@
 
 import { experimental_useObject as useObject } from "@ai-sdk/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { contractAnalysisSchema } from "@/lib/contract-schema";
+import { contractAnalysisResponseSchema, contractAnalysisSchema } from "@/lib/contract-schema";
 import { toContractResult } from "@/lib/contract-result";
 import type { AnalysisState, ContractResult } from "@/lib/contract-types";
 import { validateDocumentFile } from "@/lib/document-file";
@@ -31,7 +31,7 @@ function getStreamErrorMessage(error: Error) {
 
   // Vercel mematikan fungsi yang melewati batas dengan body non-JSON berisi
   // FUNCTION_INVOCATION_TIMEOUT. Tetap beri pesan yang jujur.
-  if (message.includes("504") || message.includes("timeout") || message.includes("function_invocation_timeout")) {
+  if (message.includes("504") || message.includes("timeout") || message.includes("aborted") || message.includes("function_invocation_timeout")) {
     return TIMEOUT_MESSAGE;
   }
 
@@ -55,6 +55,7 @@ export function useContractAnalyzer() {
   const [feedback, setFeedback] = useState("");
   const [result, setResult] = useState<ContractResult>(mockResult);
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingWarningsRef = useRef<string[]>([]);
 
   const clearProgress = useCallback(() => {
     if (progressTimerRef.current) {
@@ -65,7 +66,7 @@ export function useContractAnalyzer() {
 
   const { object: streamedAnalysis, submit, stop } = useObject({
     api: "/api/analyze",
-    schema: contractAnalysisSchema,
+    schema: contractAnalysisResponseSchema,
     onFinish({ object, error }) {
       clearProgress();
 
@@ -75,7 +76,14 @@ export function useContractAnalyzer() {
         return;
       }
 
-      const parsed = contractAnalysisSchema.safeParse(object);
+      const response = contractAnalysisResponseSchema.safeParse(object);
+      if (!response.success) {
+        setState("error");
+        setFeedback("Format hasil analisis tidak konsisten. Tidak ada hasil yang ditampilkan.");
+        return;
+      }
+
+      const parsed = contractAnalysisSchema.safeParse(response.data);
       if (!parsed.success) {
         setState("error");
         setFeedback("Format hasil analisis tidak konsisten. Tidak ada hasil yang ditampilkan.");
@@ -88,7 +96,11 @@ export function useContractAnalyzer() {
         return;
       }
 
-      setResult(toContractResult(parsed.data));
+      const warnings = [
+        ...pendingWarningsRef.current,
+        ...(response.data._meta?.warnings ?? []),
+      ].filter((warning, index, values) => values.indexOf(warning) === index);
+      setResult(toContractResult(parsed.data, { warnings }));
       setState("complete");
       window.setTimeout(
         () => document.getElementById("results")?.scrollIntoView({ behavior: "smooth", block: "start" }),
@@ -118,6 +130,7 @@ export function useContractAnalyzer() {
   }, [clearProgress]);
 
   const analyze = useCallback(async (mode: AnalysisMode) => {
+    pendingWarningsRef.current = [];
     let analysisText = text;
 
     if (mode === "upload") {
@@ -156,6 +169,7 @@ export function useContractAnalyzer() {
           return;
         }
         analysisText = payload.text;
+        if (payload.warning) pendingWarningsRef.current.push(payload.warning);
       } catch {
         clearProgress();
         setState("error");

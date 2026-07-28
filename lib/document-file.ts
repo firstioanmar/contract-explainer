@@ -1,4 +1,6 @@
-export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+// Vercel Functions membatasi seluruh request body 4,5 MB. Batas file dibuat
+// 4 MB agar masih tersedia ruang untuk multipart boundary dan metadata form.
+export const MAX_DOCUMENT_BYTES = 4 * 1024 * 1024;
 export const MAX_EXTRACTED_CHARACTERS = 60_000;
 
 /** Di bawah ini teks dianggap terlalu sedikit untuk dianalisis. */
@@ -74,7 +76,7 @@ export function validateDocumentFile(file: FileMetadata): FileValidation {
   }
 
   if (file.size > MAX_DOCUMENT_BYTES) {
-    return { valid: false, reason: "Ukuran file melebihi batas 10 MB." };
+    return { valid: false, reason: "Ukuran file melebihi batas 4 MB." };
   }
 
   if (file.type && file.type !== definition.mime) {
@@ -108,4 +110,3 @@ export function normalizeExtractedText(value: string) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
-

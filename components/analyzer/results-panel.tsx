@@ -127,6 +127,8 @@ interface ResultsPanelProps {
 export function ResultsPanel({ state, result, streamedAnalysis, onReset }: ResultsPanelProps) {
   const [copied, setCopied] = useState(false);
   const [checkedActions, setCheckedActions] = useState<number[]>([]);
+  const warnings = result.warnings ?? [];
+  const sourceReferences = result.sourceReferences ?? [];
 
   async function copySummary() {
     await navigator.clipboard.writeText(result.summary);
@@ -147,7 +149,7 @@ export function ResultsPanel({ state, result, streamedAnalysis, onReset }: Resul
       <div className="flex flex-col gap-4 border-b border-border/70 bg-gradient-to-r from-white to-primary/[.025] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div className="flex min-w-0 items-center gap-3">
           <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><CheckCircle2 className="size-5" /></span>
-          <div className="min-w-0"><div className="flex items-center gap-2"><h2 className="truncate text-sm font-extrabold">{result.title}</h2><Badge variant="success"><Check className="size-2.5" /> Selesai</Badge></div><p className="mt-1 text-[10px] text-muted-foreground">Dianalisis {result.analyzedAt} · 6 pasal terbaca</p></div>
+          <div className="min-w-0"><div className="flex items-center gap-2"><h2 className="truncate text-sm font-extrabold">{result.title}</h2><Badge variant={warnings.length > 0 ? "warning" : "success"}>{warnings.length > 0 ? <AlertTriangle className="size-2.5" /> : <Check className="size-2.5" />} {warnings.length > 0 ? "Perlu diperiksa" : "Selesai"}</Badge></div><p className="mt-1 text-[10px] text-muted-foreground">Dianalisis {result.analyzedAt}{sourceReferences.length > 0 ? ` · ${sourceReferences.length} referensi dapat dicek` : " · Sumber dicantumkan pada setiap temuan"}</p></div>
         </div>
         <div className="flex flex-wrap items-start justify-end gap-2">
           <ResultActions result={result} />
@@ -155,6 +157,12 @@ export function ResultsPanel({ state, result, streamedAnalysis, onReset }: Resul
           <Button variant="ghost" size="icon" onClick={onReset} aria-label="Analisis dokumen baru" title="Analisis dokumen baru"><RefreshCw /></Button>
         </div>
       </div>
+
+      {warnings.length > 0 && (
+        <div className="border-b border-amber-200 bg-amber-50 px-5 py-3 text-[11px] leading-5 text-amber-900 sm:px-6" role="alert">
+          <div className="flex items-start gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><div><p className="font-extrabold">Baca hasil dengan perhatian</p>{warnings.map((warning) => <p key={warning} className="mt-0.5">{warning}</p>)}</div></div>
+        </div>
+      )}
 
       <Tabs defaultValue="summary" className="w-full">
         <div className="overflow-x-auto border-b border-border/70 px-4 sm:px-6">
@@ -171,7 +179,7 @@ export function ResultsPanel({ state, result, streamedAnalysis, onReset }: Resul
             <section className="rounded-2xl border border-primary/10 bg-gradient-to-br from-primary/[.065] via-white to-teal-400/[.04] p-5">
               <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2 text-xs font-extrabold"><Sparkles className="size-4 text-primary" /> Ringkasan bahasa awam</div><Badge variant="warning"><ShieldAlert className="size-3" /> Perhatian {result.attention}</Badge></div>
               <p className="mt-4 text-sm leading-7 text-foreground/85">{result.summary}</p>
-              <p className="mt-4 text-[10px] text-muted-foreground">Sumber utama: <SourceTag>Pembukaan</SourceTag> <SourceTag>Pasal 2–8</SourceTag></p>
+              {sourceReferences.length > 0 && <div className="mt-4 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground"><span>Sumber terdeteksi:</span>{sourceReferences.slice(0, 5).map((source) => <SourceTag key={source}>{source}</SourceTag>)}{sourceReferences.length > 5 && <span>+{sourceReferences.length - 5} lainnya</span>}</div>}
             </section>
             <div className="grid gap-3 sm:grid-cols-3">
               {result.insights.map((insight) => <div key={insight} className="rounded-xl border bg-white p-3.5"><CheckCircle2 className="size-4 text-teal-500" /><p className="mt-2 text-[11px] leading-5 text-muted-foreground">{insight}</p></div>)}

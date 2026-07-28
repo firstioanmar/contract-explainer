@@ -3,7 +3,14 @@ import { generateText, NoObjectGeneratedError, Output } from "ai";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt, normalizeDocumentText } from "@/lib/ai/contract-prompt";
 import { splitDocument, type DocumentChunk } from "@/lib/ai/document-chunks";
 import { mergeAnalyses } from "@/lib/ai/merge-analysis";
-import { ANALYSIS_TIME_BUDGET_MS, MAX_OUTPUT_TOKENS, modelRotation } from "@/lib/ai/models";
+import {
+  ANALYSIS_TIME_BUDGET_MS,
+  MAX_OUTPUT_TOKENS,
+  PER_MODEL_TIMEOUT_MS,
+  estimateRequestCostUsd,
+  modelRotation,
+  type ModelTier,
+} from "@/lib/ai/models";
 import { contractAnalysisSchema, type ContractAnalysis } from "@/lib/contract-schema";
 
 /** Berapa bagian dokumen yang dianalisis bersamaan. Ditahan rendah agar tidak menabrak batas model gratis. */
@@ -29,8 +36,11 @@ export class AnalysisTimeoutError extends Error {
 export type ChunkAttempt = {
   chunk: number;
   model: string;
+  tier: ModelTier;
   ok: boolean;
   reason?: string;
+  /** Perkiraan biaya percobaan yang berhasil. Nol untuk lapis gratis. */
+  costUsd?: number;
 };
 
 export type DocumentAnalysis = {
@@ -39,10 +49,16 @@ export type DocumentAnalysis = {
   /** Bagian yang gagal dianalisis oleh seluruh model. */
   failedChunks: number[];
   attempts: ChunkAttempt[];
+  /** Total perkiraan biaya seluruh permintaan berbayar pada analisis ini. */
+  estimatedCostUsd: number;
 };
 
 function describeError(error: unknown) {
   if (NoObjectGeneratedError.isInstance(error)) return "keluaran tidak sesuai schema";
+  // Model yang melewati batas waktunya sendiri, bukan anggaran seluruh dokumen.
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return "melewati batas waktu model";
+  }
   if (error instanceof Error) return error.message.slice(0, 120);
   return "galat tidak dikenal";
 }
@@ -50,22 +66,32 @@ function describeError(error: unknown) {
 /**
  * Menganalisis satu bagian dokumen, mencoba setiap model bergiliran sampai ada
  * yang berhasil. Titik awal giliran digeser per bagian supaya seluruh model
- * terpakai dan beban tidak menumpuk di satu model saja.
+ * gratis terpakai dan beban tidak menumpuk di satu model saja; lapis berbayar
+ * yang murah baru tersentuh setelah seluruh model gratis pada giliran itu gagal.
  *
- * Saat sinyal batas waktu aktif, fungsi berhenti tanpa mencatat percobaan baru;
- * bagian yang belum sempat diproses akan dilaporkan sebagai belum selesai.
+ * Setiap model diberi batas waktunya sendiri. Model yang melewatinya kehilangan
+ * giliran dan dicatat gagal, lalu model berikutnya langsung dicoba.
+ *
+ * Saat anggaran waktu seluruh dokumen habis, fungsi berhenti tanpa mencatat
+ * percobaan baru; bagian yang belum sempat diproses dilaporkan belum selesai.
  */
 async function analyzeChunk(
   openrouter: OpenRouterProvider,
   chunk: DocumentChunk,
   attempts: ChunkAttempt[],
   signal: AbortSignal,
+  perModelTimeoutMs = PER_MODEL_TIMEOUT_MS,
 ): Promise<ContractAnalysis | null> {
   for (const model of modelRotation(chunk.index - 1)) {
     if (signal.aborted) return null;
 
+    // Dua sinyal digabung: anggaran waktu seluruh dokumen dan batas waktu model
+    // ini sendiri. Yang kedua memastikan satu model yang menggantung hanya
+    // kehilangan gilirannya, bukan menghabiskan jatah model berikutnya.
+    const attemptSignal = AbortSignal.any([signal, AbortSignal.timeout(perModelTimeoutMs)]);
+
     try {
-      const { output } = await generateText({
+      const { output, usage } = await generateText({
         model: openrouter(model.id),
         providerOptions: {
           openrouter: { plugins: [{ id: "response-healing" }] },
@@ -76,16 +102,28 @@ async function analyzeChunk(
         temperature: 0.1,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         maxRetries: 1,
-        abortSignal: signal,
+        abortSignal: attemptSignal,
       });
 
-      attempts.push({ chunk: chunk.index, model: model.label, ok: true });
+      attempts.push({
+        chunk: chunk.index,
+        model: model.label,
+        tier: model.tier,
+        ok: true,
+        costUsd: estimateRequestCostUsd(model, usage.inputTokens ?? 0, usage.outputTokens ?? 0),
+      });
       return output;
     } catch (error) {
       // Kegagalan akibat waktu habis tidak dicatat sebagai kegagalan model dan
       // tidak memicu percobaan model berikutnya.
       if (signal.aborted) return null;
-      attempts.push({ chunk: chunk.index, model: model.label, ok: false, reason: describeError(error) });
+      attempts.push({
+        chunk: chunk.index,
+        model: model.label,
+        tier: model.tier,
+        ok: false,
+        reason: describeError(error),
+      });
     }
   }
 
@@ -138,7 +176,7 @@ export function resolveAnalysisOutcome(
   }
 
   if (succeeded.length === 0) {
-    throw new Error("Seluruh model gratis gagal menganalisis dokumen ini.");
+    throw new Error("Seluruh model pada rantai cadangan gagal menganalisis dokumen ini.");
   }
 
   return { analysis: mergeAnalyses(succeeded), failedChunks };
@@ -157,6 +195,7 @@ export async function analyzeLongDocument(
   openrouter: OpenRouterProvider,
   text: string,
   budgetMs = ANALYSIS_TIME_BUDGET_MS,
+  perModelTimeoutMs = PER_MODEL_TIMEOUT_MS,
 ): Promise<DocumentAnalysis> {
   const chunks = splitDocument(normalizeDocumentText(text));
   const attempts: ChunkAttempt[] = [];
@@ -167,12 +206,13 @@ export async function analyzeLongDocument(
   let results: (ContractAnalysis | null)[];
   try {
     results = await mapWithConcurrency(chunks, CONCURRENCY, (chunk) =>
-      analyzeChunk(openrouter, chunk, attempts, controller.signal));
+      analyzeChunk(openrouter, chunk, attempts, controller.signal, perModelTimeoutMs));
   } finally {
     clearTimeout(deadline);
   }
 
   const { analysis, failedChunks } = resolveAnalysisOutcome(chunks, results, controller.signal.aborted);
+  const estimatedCostUsd = attempts.reduce((total, attempt) => total + (attempt.costUsd ?? 0), 0);
 
-  return { analysis, chunks: chunks.length, failedChunks, attempts };
+  return { analysis, chunks: chunks.length, failedChunks, attempts, estimatedCostUsd };
 }

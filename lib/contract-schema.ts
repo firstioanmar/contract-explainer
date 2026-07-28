@@ -75,6 +75,24 @@ export const contractAnalysisSchema = z.object({
 
 export type ContractAnalysis = z.infer<typeof contractAnalysisSchema>;
 
+export const analysisResponseMetaSchema = z.object({
+  isPartial: z.boolean(),
+  failedChunks: z.array(z.number().int().positive()),
+  totalChunks: z.number().int().positive(),
+  warnings: z.array(z.string().min(1)),
+});
+
+/**
+ * Metadata dibuat oleh server, bukan oleh model. Field ini opsional agar aliran
+ * objek dokumen pendek tetap memakai schema analisis yang sama tanpa meminta AI
+ * mengarang informasi operasional.
+ */
+export const contractAnalysisResponseSchema = contractAnalysisSchema.extend({
+  _meta: analysisResponseMetaSchema.optional(),
+});
+
+export type ContractAnalysisResponse = z.infer<typeof contractAnalysisResponseSchema>;
+
 export type DeepPartial<T> = T extends Array<infer Item>
   ? Array<DeepPartial<Item> | undefined>
   : T extends object

@@ -26,15 +26,71 @@ function dedupe<Item>(groups: Item[][], keyOf: (item: Item) => string, limit?: n
   return result;
 }
 
-/** Seberapa banyak fakta yang berhasil diambil sebuah bagian; dipakai memilih ringkasan terbaik. */
-function richness(analysis: ContractAnalysis) {
-  return analysis.pihak.length
-    + analysis.penalti.length
-    + analysis.klausulWaspada.length
-    + analysis.temuanUtama.length
-    + (analysis.nilaiKontrak ? 2 : 0)
-    + (analysis.tanggalMulai ? 1 : 0)
-    + (analysis.tanggalJatuhTempo ? 1 : 0);
+function summarySentences(value: string) {
+  return value.match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((sentence) => sentence.trim()).filter(Boolean) ?? [value];
+}
+
+/** Mengambil sedikitnya satu fakta ringkasan dari setiap bagian, maksimal empat kalimat. */
+function mergeSummaries(analyses: ContractAnalysis[]) {
+  const perPart = analyses.map((analysis) => summarySentences(analysis.ringkasan));
+  const selected = dedupe(perPart.map((sentences) => sentences.slice(0, 1)), normalizeKey, 4);
+
+  if (selected.length < 4) {
+    const additions = dedupe(perPart, normalizeKey);
+    for (const sentence of additions) {
+      if (selected.some((current) => normalizeKey(current) === normalizeKey(sentence))) continue;
+      selected.push(sentence);
+      if (selected.length >= 4) break;
+    }
+  }
+
+  return selected.join(" ");
+}
+
+/**
+ * Jangan membandingkan angka lintas mata uang. Pilih mata uang yang paling
+ * sering terdeteksi, lalu angka terbesar di dalam mata uang tersebut untuk
+ * membedakan total dari subtotal/cicilan.
+ */
+function selectContractValue(analyses: ContractAnalysis[]) {
+  const values = analyses.flatMap((analysis, partIndex) => analysis.nilaiKontrak
+    ? [{ value: analysis.nilaiKontrak, partIndex }]
+    : []);
+  if (values.length === 0) return null;
+
+  const groups = new Map<string, typeof values>();
+  for (const candidate of values) {
+    const currency = candidate.value.mataUang.toUpperCase();
+    groups.set(currency, [...(groups.get(currency) ?? []), candidate]);
+  }
+
+  const selectedCurrency = [...groups.entries()].sort((a, b) => {
+    if (b[1].length !== a[1].length) return b[1].length - a[1].length;
+    return a[1][0].partIndex - b[1][0].partIndex;
+  })[0][0];
+
+  return [...groups.get(selectedCurrency)!].sort((a, b) => b.value.nilai - a.value.nilai)[0].value;
+}
+
+function mostFrequentDefined<Key extends "tanggalMulai" | "tanggalJatuhTempo" | "durasi">(
+  analyses: ContractAnalysis[],
+  key: Key,
+) {
+  const values = analyses.flatMap((analysis, partIndex) => analysis[key]
+    ? [{ value: analysis[key], partIndex }]
+    : []);
+  if (values.length === 0) return null;
+
+  const groups = new Map<string, typeof values>();
+  for (const candidate of values) {
+    const groupKey = normalizeKey(candidate.value!.tampilan);
+    groups.set(groupKey, [...(groups.get(groupKey) ?? []), candidate]);
+  }
+
+  return [...groups.values()].sort((a, b) => {
+    if (b.length !== a.length) return b.length - a.length;
+    return a[0].partIndex - b[0].partIndex;
+  })[0][0].value;
 }
 
 function highestAttention(values: Attention[]): Attention {
@@ -74,19 +130,8 @@ export function mergeAnalyses(parts: ContractAnalysis[]): ContractAnalysis {
   // Judul diambil dari bagian pertama karena judul dokumen selalu ada di awal.
   const judulDokumen = valid[0].judulDokumen;
 
-  // Ringkasan diambil dari bagian dengan ekstraksi terkaya, bukan digabung,
-  // agar tetap 2-4 kalimat dan tidak berulang.
-  const ringkasan = [...valid].sort((a, b) => richness(b) - richness(a))[0].ringkasan;
-
-  // Nilai terbesar dipilih karena subtotal, cicilan, dan pajak selalu lebih
-  // kecil daripada total transaksi yang dicari.
-  const nilaiKontrak = valid
-    .map((part) => part.nilaiKontrak)
-    .filter((value): value is NonNullable<ContractAnalysis["nilaiKontrak"]> => value !== null)
-    .sort((a, b) => b.nilai - a.nilai)[0] ?? null;
-
-  const firstDefined = <Key extends "tanggalMulai" | "tanggalJatuhTempo" | "durasi">(key: Key) =>
-    valid.find((part) => part[key] !== null)?.[key] ?? null;
+  const ringkasan = mergeSummaries(valid);
+  const nilaiKontrak = selectContractValue(valid);
 
   return {
     jenisDokumen,
@@ -97,9 +142,9 @@ export function mergeAnalyses(parts: ContractAnalysis[]): ContractAnalysis {
     ringkasan,
     pihak: dedupe(valid.map((part) => part.pihak), (party) => normalizeKey(party.nama)),
     nilaiKontrak,
-    tanggalMulai: firstDefined("tanggalMulai"),
-    tanggalJatuhTempo: firstDefined("tanggalJatuhTempo"),
-    durasi: firstDefined("durasi"),
+    tanggalMulai: mostFrequentDefined(valid, "tanggalMulai"),
+    tanggalJatuhTempo: mostFrequentDefined(valid, "tanggalJatuhTempo"),
+    durasi: mostFrequentDefined(valid, "durasi"),
     temuanUtama: dedupe(valid.map((part) => part.temuanUtama), normalizeKey, 5),
     penalti: dedupe(
       valid.map((part) => part.penalti),

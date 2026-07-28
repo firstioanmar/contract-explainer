@@ -5,7 +5,8 @@ import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/config";
 import type { AuthUser } from "@/lib/auth/types";
 
 function getSessionKey() {
-  const secret = process.env.AUTH_SECRET?.trim() || process.env.OPENROUTER_API_KEY?.trim();
+  const secret = process.env.AUTH_SECRET?.trim()
+    || (process.env.NODE_ENV !== "production" ? process.env.OPENROUTER_API_KEY?.trim() : undefined);
   if (!secret) throw new Error("AUTH_SECRET belum dikonfigurasi.");
   return new TextEncoder().encode(secret);
 }

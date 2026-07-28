@@ -1,10 +1,16 @@
+import { writeFileSync } from "node:fs";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateText, NoObjectGeneratedError, Output } from "ai";
 import { analyzeLongDocument } from "../lib/ai/analyze-document";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt } from "../lib/ai/contract-prompt";
-import { ANALYSIS_MODELS, MAX_OUTPUT_TOKENS } from "../lib/ai/models";
+import { ANALYSIS_MODELS, MAX_OUTPUT_TOKENS, PAID_FALLBACK_TIER, estimateRequestCostUsd } from "../lib/ai/models";
 import { contractAnalysisSchema, type ContractAnalysis } from "../lib/contract-schema";
 import { contractFixtures, nonContractFixture } from "../tests/fixtures/contracts";
+
+const EVALUATION_REQUEST_TIMEOUT_MS = Math.max(
+  10_000,
+  (Number(process.env.EVALUATION_REQUEST_TIMEOUT_SECONDS) || 45) * 1_000,
+);
 
 /** Menormalkan teks agar perbandingan kutipan tidak gagal karena spasi atau tanda baca. */
 function loose(text: string) {
@@ -69,15 +75,18 @@ async function main() {
   // Setiap model diuji sendiri-sendiri, bukan lewat rantai cadangan, supaya
   // terlihat model mana yang benar-benar layak dipakai dan mana yang selalu
   // gagal. Router di produksi memakai hasil ini sebagai dasar urutan prioritas.
-  const scoreboard: Array<{ model: string; pass: number; total: number }> = [];
+  const scoreboard: Array<{ model: string; tier: string; pass: number; total: number }> = [];
+  let evaluationCostUsd = 0;
+
+  console.log(`Lapis berbayar: ${PAID_FALLBACK_TIER}. Evaluasi menguji setiap model dalam daftar aktif, termasuk yang berbayar.`);
 
   for (const model of ANALYSIS_MODELS) {
-    console.log(`\n=== ${model.label} (${model.id}) ===`);
+    console.log(`\n=== ${model.label} (${model.id}) [${model.tier}] ===`);
     let pass = 0;
 
     for (const fixture of cases) {
       try {
-        const { output } = await generateText({
+        const { output, usage } = await generateText({
           model: openrouter(model.id),
           providerOptions: {
             openrouter: { plugins: [{ id: "response-healing" }] },
@@ -88,7 +97,10 @@ async function main() {
           temperature: 0.1,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
           maxRetries: 1,
+          abortSignal: AbortSignal.timeout(EVALUATION_REQUEST_TIMEOUT_MS),
         });
+
+        evaluationCostUsd += estimateRequestCostUsd(model, usage.inputTokens ?? 0, usage.outputTokens ?? 0);
 
         const classified = output.isValidDocument === fixture.expectedValid
           && output.jenisDokumen === fixture.expectedType
@@ -108,7 +120,7 @@ async function main() {
       }
     }
 
-    scoreboard.push({ model: model.label, pass, total: cases.length });
+    scoreboard.push({ model: model.label, tier: model.tier, pass, total: cases.length });
   }
 
   // Jalur dokumen panjang diuji terpisah: pemecahan, giliran model, dan
@@ -121,11 +133,18 @@ async function main() {
       .join("\n\n")
       .repeat(12);
 
-    const { analysis, chunks, failedChunks, attempts } = await analyzeLongDocument(openrouter, longDocument);
-    const modelsUsed = new Set(attempts.filter((attempt) => attempt.ok).map((attempt) => attempt.model));
+    const { analysis, chunks, failedChunks, attempts, estimatedCostUsd } = await analyzeLongDocument(
+      openrouter,
+      longDocument,
+      Math.min(180_000, EVALUATION_REQUEST_TIMEOUT_MS * 3),
+    );
+    const succeeded = attempts.filter((attempt) => attempt.ok);
+    const modelsUsed = new Set(succeeded.map((attempt) => attempt.model));
+    const paidChunks = succeeded.filter((attempt) => attempt.tier !== "gratis").length;
+    evaluationCostUsd += estimatedCostUsd;
 
     longDocumentOk = analysis.isValidDocument && failedChunks.length === 0;
-    console.log(`  ${longDocumentOk ? "PASS" : "FAIL"} ${chunks} bagian, gagal: ${failedChunks.length}, model terpakai: ${[...modelsUsed].join(", ") || "-"}`);
+    console.log(`  ${longDocumentOk ? "PASS" : "FAIL"} ${chunks} bagian, gagal: ${failedChunks.length}, ${paidChunks} lewat lapis berbayar, model terpakai: ${[...modelsUsed].join(", ") || "-"}`);
     console.log(`  pihak=${analysis.pihak.length}, penalti=${analysis.penalti.length}, klausul=${analysis.klausulWaspada.length}`);
     for (const attempt of attempts.filter((item) => !item.ok)) {
       console.log(`    bagian ${attempt.chunk} via ${attempt.model}: ${attempt.reason}`);
@@ -136,11 +155,38 @@ async function main() {
 
   console.log("\n=== ringkasan ===");
   for (const row of scoreboard) {
-    console.log(`  ${row.model}: ${row.pass}/${row.total}`);
+    console.log(`  ${row.model} [${row.tier}]: ${row.pass}/${row.total}`);
   }
   console.log(`  dokumen panjang: ${longDocumentOk ? "PASS" : "FAIL"}`);
+  console.log(`  perkiraan biaya evaluasi: $${evaluationCostUsd.toFixed(5)}`);
 
   const usableModels = scoreboard.filter((row) => row.pass === row.total).length;
+
+  // Model yang gagal pada seluruh kasus adalah temuan yang paling perlu
+  // ditindak: ia menempati slot di rantai tanpa pernah menghasilkan apa pun,
+  // dan pada dokumen panjang ia hanya memakan anggaran waktu bagian itu.
+  // Kegagalan seperti ini pernah luput karena evaluasi dulu hanya mengeluh bila
+  // seluruh model gagal sekaligus.
+  const deadModels = scoreboard.filter((row) => row.pass === 0);
+
+  if (process.env.EVAL_REPORT_PATH) {
+    // Laporan mesin dipakai penjadwal untuk membuka isu tanpa mengurai teks log.
+    writeFileSync(process.env.EVAL_REPORT_PATH, `${JSON.stringify({
+      ranAt: new Date().toISOString(),
+      paidTier: PAID_FALLBACK_TIER,
+      estimatedCostUsd: Number(evaluationCostUsd.toFixed(5)),
+      longDocumentOk,
+      models: scoreboard,
+      deadModels: deadModels.map((row) => row.model),
+    }, null, 2)}\n`);
+  }
+
+  if (deadModels.length > 0) {
+    console.error(`\nModel yang gagal pada seluruh kasus uji: ${deadModels.map((row) => `${row.model} [${row.tier}]`).join(", ")}.`);
+    console.error("Keluarkan dari daftar di lib/ai/models.ts atau turunkan prioritasnya.");
+    process.exit(1);
+  }
+
   if (usableModels === 0) {
     console.error("\nTidak ada model yang lolos seluruh kasus uji.");
     process.exit(1);

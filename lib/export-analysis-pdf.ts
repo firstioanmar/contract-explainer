@@ -47,14 +47,30 @@ export function createAnalysisPdf(result: ContractResult) {
   doc.setFontSize(8);
   doc.text(pdfText(result.attention), pageWidth - margin - 15, 40.5, { align: "center" });
 
+  let summaryTitleY = 54;
+  if (result.warnings && result.warnings.length > 0) {
+    doc.setFillColor(255, 247, 224);
+    const warningText = pdfText(`Perhatian: ${result.warnings.join(" ")}`);
+    const warningLines = doc.splitTextToSize(warningText, contentWidth - 8);
+    const warningHeight = Math.max(12, warningLines.length * 4.2 + 6);
+    doc.roundedRect(margin, 49, contentWidth, warningHeight, 2, 2, "F");
+    doc.setTextColor(140, 82, 5);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(warningLines, margin + 4, 55, { lineHeightFactor: 1.3 });
+    summaryTitleY = 49 + warningHeight + 8;
+  }
+
   doc.setTextColor(25, 30, 45);
+  doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
-  doc.text("Ringkasan", margin, 54);
+  doc.text("Ringkasan", margin, summaryTitleY);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9.5);
   const summaryLines = doc.splitTextToSize(pdfText(result.summary), contentWidth);
-  doc.text(summaryLines, margin, 61, { lineHeightFactor: 1.45 });
-  let cursorY = 61 + summaryLines.length * 5.2 + 5;
+  const summaryTextY = summaryTitleY + 7;
+  doc.text(summaryLines, margin, summaryTextY, { lineHeightFactor: 1.45 });
+  let cursorY = summaryTextY + summaryLines.length * 5.2 + 5;
 
   autoTable(doc, {
     startY: cursorY,

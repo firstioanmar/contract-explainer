@@ -3,13 +3,17 @@ import { Output, streamText } from "ai";
 import { analyzeLongDocument, AnalysisTimeoutError } from "@/lib/ai/analyze-document";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt, normalizeDocumentText } from "@/lib/ai/contract-prompt";
 import { splitDocument } from "@/lib/ai/document-chunks";
-import { FALLBACK_ANALYSIS_MODELS, MAX_OUTPUT_TOKENS, PRIMARY_ANALYSIS_MODEL } from "@/lib/ai/models";
+import {
+  FALLBACK_ANALYSIS_MODELS,
+  MAX_OUTPUT_TOKENS,
+  PRIMARY_ANALYSIS_MODEL,
+  SHORT_ANALYSIS_TIME_BUDGET_MS,
+} from "@/lib/ai/models";
 import { analyzeRequestSchema, contractAnalysisSchema } from "@/lib/contract-schema";
 import { checkRateLimit, getClientIp, rateLimitHeaders } from "@/lib/rate-limit";
 
-// Batas yang diminta ke platform. Vercel Hobby tetap membatasi 60 detik apa pun
-// nilainya; batas waktu efektif diatur oleh ANALYSIS_TIME_BUDGET_SECONDS agar
-// server sempat mengembalikan pesan jujur sebelum fungsi dimatikan paksa.
+// Fluid Compute mendukung 300 detik pada Vercel Hobby. Deadline internal tetap
+// lebih pendek supaya aplikasi mengakhiri model yang menggantung secara jujur.
 export const maxDuration = 300;
 
 function jsonError(message: string, status: number, headers?: HeadersInit) {
@@ -72,14 +76,33 @@ export async function POST(request: Request) {
   // bagian selesai, sehingga jalur ini tidak mengalirkan hasil sebagian.
   if (chunks.length > 1) {
     try {
-      const { analysis, chunks: total, failedChunks, attempts } = await analyzeLongDocument(openrouter, normalized);
+      const { analysis, chunks: total, failedChunks, attempts, estimatedCostUsd } =
+        await analyzeLongDocument(openrouter, normalized);
+
+      // Berapa bagian yang harus ditebus lapis berbayar adalah sinyal kesehatan
+      // lapis gratis. Bila angkanya terus naik, urutan model perlu ditinjau.
+      const succeeded = attempts.filter((attempt) => attempt.ok);
+      const paidChunks = succeeded.filter((attempt) => attempt.tier !== "gratis").length;
 
       console.info(
-        `Contract analysis: ${total} bagian, ${attempts.filter((attempt) => attempt.ok).length} berhasil`,
+        `Contract analysis: ${total} bagian, ${succeeded.length} berhasil`,
+        `(${paidChunks} lewat lapis berbayar, ~$${estimatedCostUsd.toFixed(5)})`,
         failedChunks.length > 0 ? `bagian gagal: ${failedChunks.join(", ")}` : "",
       );
 
-      return jsonStream(analysis, headers);
+      const warnings = failedChunks.length > 0
+        ? [`Analisis selesai sebagian. Bagian ${failedChunks.join(", ")} dari ${total} tidak dapat dibaca oleh model AI dan tidak disertakan dalam hasil.`]
+        : [];
+
+      return jsonStream({
+        ...analysis,
+        _meta: {
+          isPartial: failedChunks.length > 0,
+          failedChunks,
+          totalChunks: total,
+          warnings,
+        },
+      }, headers);
     } catch (error) {
       // Kehabisan waktu: sampaikan jujur bahwa dokumen tidak dapat dituntaskan,
       // jangan menyajikan analisis yang diam-diam kehilangan sebagian isi.
@@ -93,7 +116,7 @@ export async function POST(request: Request) {
       }
 
       console.error("Long document analysis failed", error instanceof Error ? error.message : "UnknownError");
-      return jsonError("Seluruh model gratis gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
+      return jsonError("Seluruh model AI yang tersedia gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
     }
   }
 
@@ -117,6 +140,7 @@ export async function POST(request: Request) {
     temperature: 0.1,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     maxRetries: 2,
+    abortSignal: AbortSignal.timeout(SHORT_ANALYSIS_TIME_BUDGET_MS),
     onError({ error }) {
       console.error("Contract analysis stream failed", error instanceof Error ? error.name : "UnknownError");
     },

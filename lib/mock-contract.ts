@@ -80,4 +80,6 @@ export const mockResult: ContractResult = {
     { text: "Pastikan kriteria persetujuan desain ditulis secara objektif.", source: "Pasal 3" },
     { text: "Simpan semua persetujuan perubahan tenggat dalam bentuk tertulis.", source: "Pasal 2" },
   ],
+  warnings: [],
+  sourceReferences: ["Pembukaan", "Pasal 2", "Pasal 3", "Pasal 4.1", "Pasal 4.2", "Pasal 6.1", "Pasal 6.2", "Pasal 8"],
 };
