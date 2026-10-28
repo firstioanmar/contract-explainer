@@ -21,14 +21,17 @@ Buka `http://localhost:3000`, pilih **Gunakan Contoh**, centang persetujuan, lal
 
 | Variabel | Wajib | Default | Keterangan |
 |---|---:|---|---|
-| `OPENROUTER_API_KEY` | Ya | — | API key server-side dari OpenRouter. |
+| `OPENROUTER_API_KEY` | Ya | — | API key server-side dari OpenRouter. Jangan pernah pakai prefix `NEXT_PUBLIC_`. |
+| `OPENROUTER_MODEL` | Tidak | `openai/gpt-4.1-mini` | Model utama untuk analisis dokumen pendek; harus mendukung JSON Schema / structured outputs. |
+| `OPENROUTER_FALLBACK_MODELS` | Tidak | Tiga model berbiaya rendah | Override daftar sampai tiga model cadangan, pisahkan dengan koma. |
+| `OPENROUTER_MODEL_INPUT_USD_PER_MTOK` / `OPENROUTER_MODEL_OUTPUT_USD_PER_MTOK` | Tidak | Harga model yang dikenal | Wajib diisi bersama jika memakai model utama kustom yang belum memiliki harga tercatat dan ingin memasukkannya ke router dokumen panjang. |
 | `AUTH_SECRET` | Production | fallback API key hanya saat lokal | Rahasia panjang khusus untuk menandatangani cookie sesi. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Tidak | Client ID KontrakJelas | OAuth client untuk Google Identity Services. |
 | `PAID_FALLBACK_TIER` | Tidak | `murah` | Sejauh mana lapis berbayar menebus kegagalan lapis gratis: `none`, `murah`, atau `andal`. |
 | `ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `240` | Deadline dokumen panjang sebelum batas Vercel Fluid Compute. |
 | `SHORT_ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `90` | Deadline untuk streaming dokumen pendek. |
 | `PER_MODEL_TIMEOUT_SECONDS` | Tidak | `70` | Batas waktu satu model per bagian, agar model yang menggantung tidak memakan jatah model cadangan. |
-| `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `2` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. |
+| `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `2` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. Gunakan `0` untuk langsung memakai model berbayar pada dokumen panjang. |
 | `EVALUATION_REQUEST_TIMEOUT_SECONDS` | Tidak | `45` | Deadline per model saat menjalankan evaluasi. |
 
 Key hanya dibaca oleh Route Handler dan tidak dikirim ke browser.
@@ -43,14 +46,14 @@ Google login juga memerlukan **Authorized JavaScript origins** berikut pada OAut
 ```text
 Teks / PDF teks / DOCX → validasi client + server → ekstraksi file
          → POST /api/analyze → rate limit per-IP
-         → OpenRouter: 5 model gratis bergiliran → cadangan berbayar murah
-         → streamText/analisis per bagian + Output.object(Zod)
-         → metadata kelengkapan → card/tabel bertahap → validasi objek final
+         → dokumen pendek: OPENROUTER_MODEL + hingga 3 model cadangan OpenRouter
+         → dokumen panjang: chunk global + overlap + tier model berbiaya
+         → Output.object(Zod) → metadata kelengkapan → validasi objek final
 ```
 
 `AnalyzerWorkspace` hanya menangani komposisi halaman. State input, lifecycle streaming, timer progress, error mapping, dan reset dikelola oleh `useContractAnalyzer`; validasi serta transformasi hasil tetap berupa fungsi pure di `lib/`.
 
-Endpoint menerima JSON `{ "text": "..." }`. Respons berupa text stream JSON parsial yang dikonsumsi `useObject`. Maksimal lima analisis per IP per menit. In-memory limiter ini sesuai untuk demo satu instance; produksi multi-instance sebaiknya memakai Vercel KV/Upstash.
+Endpoint menerima JSON `{ "text": "..." }`. Respons berupa teks JSON yang dikonsumsi `useObject`; analisis pendek menunggu objek lengkap sebelum mengembalikan HTTP 200 agar kegagalan provider bisa dikirim sebagai status dan pesan yang jelas, bukan respons kosong. Maksimal lima analisis per IP per menit. In-memory limiter ini sesuai untuk demo satu instance; produksi multi-instance sebaiknya memakai Vercel KV/Upstash.
 
 ## Quality checks
 
