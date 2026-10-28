@@ -1,5 +1,5 @@
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { Output, streamText } from "ai";
+import { generateText, NoObjectGeneratedError, Output } from "ai";
 import { analyzeLongDocument, AnalysisTimeoutError } from "@/lib/ai/analyze-document";
 import { CONTRACT_SYSTEM_PROMPT, buildContractPrompt, normalizeDocumentText } from "@/lib/ai/contract-prompt";
 import { splitDocument } from "@/lib/ai/document-chunks";
@@ -17,6 +17,78 @@ import { checkRateLimit, getClientIp, rateLimitHeaders } from "@/lib/rate-limit"
 // Fluid Compute mendukung 300 detik pada Vercel Hobby. Deadline internal tetap
 // lebih pendek supaya aplikasi mengakhiri model yang menggantung secara jujur.
 export const maxDuration = 300;
+
+
+type ProviderFailure = { status: number; message: string; code: string };
+
+function getProviderFailure(error: unknown): ProviderFailure {
+  if (NoObjectGeneratedError.isInstance(error)) {
+    return {
+      status: 502,
+      code: "invalid_structured_output",
+      message: "Model AI tidak menghasilkan data kontrak dalam format yang valid. Coba lagi atau gunakan dokumen yang lebih pendek.",
+    };
+  }
+
+  const candidate = typeof error === "object" && error !== null
+    ? error as { statusCode?: unknown; status?: unknown; name?: unknown; message?: unknown; responseBody?: unknown }
+    : {};
+  const statusCandidate = Number(candidate.statusCode ?? candidate.status);
+  const status = Number.isInteger(statusCandidate) && statusCandidate >= 400 && statusCandidate <= 599
+    ? statusCandidate
+    : 502;
+  const details = `${typeof candidate.message === "string" ? candidate.message : ""} ${typeof candidate.responseBody === "string" ? candidate.responseBody : ""}`.toLowerCase();
+  const code = typeof candidate.name === "string" ? candidate.name : "UnknownProviderError";
+
+  if (status === 401 || status === 403 || /invalid api key|unauthorized|authentication/.test(details)) {
+    return {
+      status: 502,
+      code: "openrouter_authentication",
+      message: "Autentikasi OpenRouter ditolak. Periksa OPENROUTER_API_KEY di Vercel Production dan pastikan key masih aktif.",
+    };
+  }
+  if (status === 402 || /insufficient credits|payment required|billing/.test(details)) {
+    return {
+      status: 502,
+      code: "openrouter_credits",
+      message: "Saldo atau billing OpenRouter tidak mencukupi. Periksa kredit akun OpenRouter sebelum mencoba lagi.",
+    };
+  }
+  if (status === 429 || /rate.?limit|too many requests/.test(details)) {
+    return {
+      status: 503,
+      code: "openrouter_rate_limit",
+      message: "OpenRouter sedang membatasi permintaan. Tunggu sebentar lalu coba lagi.",
+    };
+  }
+  if (status === 404 || /model not found|unknown model/.test(details)) {
+    return {
+      status: 502,
+      code: "openrouter_model",
+      message: "Model OpenRouter tidak ditemukan. Periksa OPENROUTER_MODEL dan nama model cadangan di Vercel.",
+    };
+  }
+  if (status === 400 || /response_format|json schema|structured output|unsupported parameter/.test(details)) {
+    return {
+      status: 502,
+      code: "openrouter_structured_output",
+      message: "Model atau provider menolak format JSON Schema. Pilih model OpenRouter yang mendukung structured outputs.",
+    };
+  }
+  if (status === 408 || status === 504 || /timed out|timeout|aborted/.test(details)) {
+    return {
+      status: 504,
+      code: "openrouter_timeout",
+      message: "Analisis melewati batas waktu. Coba dokumen yang lebih pendek atau ulangi beberapa saat lagi.",
+    };
+  }
+
+  return {
+    status: status >= 500 ? 502 : status,
+    code,
+    message: "OpenRouter gagal menyelesaikan analisis. Periksa status layanan dan konfigurasi model, lalu coba lagi.",
+  };
+}
 
 function jsonError(message: string, status: number, headers?: HeadersInit) {
   return Response.json({ error: message }, { status, headers });
@@ -134,36 +206,42 @@ export async function POST(request: Request) {
         );
       }
 
-      console.error("Long document analysis failed", error instanceof Error ? error.message : "UnknownError");
-      return jsonError("Seluruh model AI yang tersedia gagal menganalisis dokumen ini. Coba lagi sebentar lagi.", 502, headers);
+      const failure = getProviderFailure(error);
+      console.error(`Long document analysis failed code=${failure.code} status=${failure.status}`);
+      return jsonError(failure.message, failure.status, headers);
     }
   }
 
-  // Dokumen pendek tetap dialirkan token demi token agar hasil parsial langsung
-  // tampil. Pergantian model ditangani OpenRouter sebelum aliran dimulai.
-  const result = streamText({
-    model: openrouter(PRIMARY_ANALYSIS_MODEL),
-    providerOptions: {
-      openrouter: {
-        models: [...FALLBACK_ANALYSIS_MODELS],
-        plugins: [{ id: "response-healing" }],
+  // Generate the complete short-document object before returning HTTP 200.
+  // A streaming response commits its status before OpenRouter's provider error
+  // is known, which previously let provider failures become empty HTTP 200 bodies.
+  try {
+    const result = await generateText({
+      model: openrouter(PRIMARY_ANALYSIS_MODEL),
+      providerOptions: {
+        openrouter: {
+          models: [...FALLBACK_ANALYSIS_MODELS],
+          plugins: [{ id: "response-healing" }],
+        },
       },
-    },
-    system: CONTRACT_SYSTEM_PROMPT,
-    prompt: buildContractPrompt(normalized),
-    output: Output.object({
-      schema: contractAnalysisSchema,
-      name: "analisis_kontrak",
-      description: "Analisis terstruktur kontrak atau invoice dalam bahasa Indonesia awam.",
-    }),
-    temperature: 0.1,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
-    maxRetries: 2,
-    abortSignal: AbortSignal.timeout(SHORT_ANALYSIS_TIME_BUDGET_MS),
-    onError({ error }) {
-      console.error("Contract analysis stream failed", error instanceof Error ? error.name : "UnknownError");
-    },
-  });
+      system: CONTRACT_SYSTEM_PROMPT,
+      prompt: buildContractPrompt(normalized),
+      output: Output.object({
+        schema: contractAnalysisSchema,
+        name: "analisis_kontrak",
+        description: "Analisis terstruktur kontrak atau invoice dalam bahasa Indonesia awam.",
+      }),
+      temperature: 0.1,
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxRetries: 1,
+      abortSignal: AbortSignal.timeout(SHORT_ANALYSIS_TIME_BUDGET_MS),
+    });
 
-  return result.toTextStreamResponse({ headers });
+    return jsonStream(clearRejectedAnalysis(result.output), headers);
+  } catch (error) {
+    const failure = getProviderFailure(error);
+    // Never log API keys, document text, raw model output, or raw provider body.
+    console.error(`Contract analysis failed code=${failure.code} status=${failure.status} model=${PRIMARY_ANALYSIS_MODEL}`);
+    return jsonError(failure.message, failure.status, headers);
+  }
 }
