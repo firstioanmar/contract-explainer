@@ -21,6 +21,25 @@ const CONCURRENCY = 2;
  * Dipakai route untuk membedakan "kehabisan waktu" dari "semua model gagal",
  * sehingga pesan ke pengguna bisa jujur dan spesifik.
  */
+export class AnalysisProviderError extends Error {
+  readonly statusCode: number;
+
+  constructor(statusCode: number, reason: string) {
+    super(reason);
+    this.name = "AnalysisProviderError";
+    this.statusCode = statusCode;
+  }
+}
+
+function getErrorStatusCode(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const candidate = error as Error & { statusCode?: unknown; status?: unknown };
+  const value = Number(candidate.statusCode ?? candidate.status);
+  if (Number.isInteger(value) && value >= 400 && value <= 599) return value;
+  if (error.name === "TimeoutError" || error.name === "AbortError") return 504;
+  return undefined;
+}
+
 export class AnalysisTimeoutError extends Error {
   readonly completedChunks: number;
   readonly totalChunks: number;
@@ -41,6 +60,8 @@ export type ChunkAttempt = {
   reason?: string;
   /** Perkiraan biaya percobaan yang berhasil. Nol untuk lapis gratis. */
   costUsd?: number;
+  /** Status provider untuk diagnosis aman tanpa menyimpan body respons mentah. */
+  statusCode?: number;
 };
 
 export type DocumentAnalysis = {
@@ -123,6 +144,7 @@ async function analyzeChunk(
         tier: model.tier,
         ok: false,
         reason: describeError(error),
+        statusCode: getErrorStatusCode(error),
       });
     }
   }
@@ -211,7 +233,20 @@ export async function analyzeLongDocument(
     clearTimeout(deadline);
   }
 
-  const { analysis, failedChunks } = resolveAnalysisOutcome(chunks, results, controller.signal.aborted);
+  let outcome: ReturnType<typeof resolveAnalysisOutcome>;
+  try {
+    outcome = resolveAnalysisOutcome(chunks, results, controller.signal.aborted);
+  } catch (error) {
+    // Preserve only the last provider status, not upstream response bodies or
+    // document contents, so the route can return a useful authentication/billing
+    // message instead of a generic empty result.
+    const lastStatus = [...attempts].reverse().find((attempt) => !attempt.ok && attempt.statusCode)?.statusCode;
+    if (lastStatus && !(error instanceof AnalysisTimeoutError)) {
+      throw new AnalysisProviderError(lastStatus, error instanceof Error ? error.message : "OpenRouter request failed");
+    }
+    throw error;
+  }
+  const { analysis, failedChunks } = outcome;
   const estimatedCostUsd = attempts.reduce((total, attempt) => total + (attempt.costUsd ?? 0), 0);
 
   return { analysis, chunks: chunks.length, failedChunks, attempts, estimatedCostUsd };
