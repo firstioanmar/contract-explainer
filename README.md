@@ -34,7 +34,7 @@ Buka `http://localhost:3000`, pilih **Gunakan Contoh**, centang persetujuan, lal
 | `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `2` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. Gunakan `0` untuk langsung memakai model berbayar pada dokumen panjang. |
 | `EVALUATION_REQUEST_TIMEOUT_SECONDS` | Tidak | `45` | Deadline per model saat menjalankan evaluasi. |
 
-Key hanya dibaca oleh Route Handler dan tidak dikirim ke browser.
+Key hanya dibaca oleh Route Handler dan tidak dikirim ke browser. Untuk model multi-tier, lihat [aturan routing OpenRouter dan document-grounding](docs/OPENROUTER_ROUTING_AND_RAG.md). Versi runtime yang didukung: Node.js 24 dan npm 11 atau lebih baru.
 
 Google login juga memerlukan **Authorized JavaScript origins** berikut pada OAuth Client di Google Cloud Console:
 
@@ -52,6 +52,8 @@ Teks / PDF teks / DOCX → validasi client + server → ekstraksi file
 ```
 
 `AnalyzerWorkspace` hanya menangani komposisi halaman. State input, lifecycle streaming, timer progress, error mapping, dan reset dikelola oleh `useContractAnalyzer`; validasi serta transformasi hasil tetap berupa fungsi pure di `lib/`.
+
+Alur model dan strategi document-grounding lengkap dijelaskan di [docs/OPENROUTER_ROUTING_AND_RAG.md](docs/OPENROUTER_ROUTING_AND_RAG.md).
 
 Endpoint menerima JSON `{ "text": "..." }`. Respons berupa teks JSON yang dikonsumsi `useObject`; analisis pendek menunggu objek lengkap sebelum mengembalikan HTTP 200 agar kegagalan provider bisa dikirim sebagai status dan pesan yang jelas, bukan respons kosong. Maksimal lima analisis per IP per menit. In-memory limiter ini sesuai untuk demo satu instance; produksi multi-instance sebaiknya memakai Vercel KV/Upstash.
 
