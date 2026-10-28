@@ -5,7 +5,7 @@
 - `OPENROUTER_API_KEY` is server-only. Never use a `NEXT_PUBLIC_` prefix and never commit it.
 - `OPENROUTER_MODEL` selects the primary model for short documents. The documented default is `openai/gpt-4.1-mini`, which supports structured outputs and currently lists input/output prices of USD 0.40 / USD 1.60 per 1 million tokens on OpenRouter.
 - `OPENROUTER_FALLBACK_MODELS` optionally overrides the fallback order with up to three comma-separated model IDs.
-- `PAID_FALLBACK_TIER=murah` uses cheap model fallbacks for long documents. `andal` adds the additional reliable tier. `none` disables paid fallbacks.
+- `PAID_FALLBACK_TIER=murah` uses cheap model fallbacks for long documents. `andal` adds the additional reliable tier and is the configured production setting. `none` disables paid fallbacks.
 - `MAX_FREE_ATTEMPTS_PER_CHUNK=0` makes long-document analysis start with configured paid models instead of trying free models first.
 - Custom models that are added to long-document cost estimates need both `OPENROUTER_MODEL_INPUT_USD_PER_MTOK` and `OPENROUTER_MODEL_OUTPUT_USD_PER_MTOK` unless their price is already known by the application.
 
@@ -31,7 +31,7 @@ The app deliberately uses document-grounded chunking and merging rather than ret
 1. Normalize extracted text and preserve global line numbers.
 2. Split the complete document into bounded chunks with line overlap, so a clause near a boundary is less likely to be severed.
 3. Analyze each chunk with the same extraction schema and cite the source line or written article number.
-4. Use the model-tier policy for retries. For a cost-first paid configuration, set `MAX_FREE_ATTEMPTS_PER_CHUNK=0` and `PAID_FALLBACK_TIER=murah`; the low-cost paid chain is tried before the configured reliable model.
+4. Use the model-tier policy for retries. For cost-aware paid routing, set `MAX_FREE_ATTEMPTS_PER_CHUNK=0` and `PAID_FALLBACK_TIER=andal`; the low-cost paid chain is tried first, then the more reliable tier and configured model are available as backups.
 5. Merge results deterministically: deduplicate parties and clauses, respect monetary totals and currencies, and retain the highest supported risk level.
 6. If chunks fail or the time budget expires, make incompleteness explicit. Never label a partial result as a complete document analysis.
 
