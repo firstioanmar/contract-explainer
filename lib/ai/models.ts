@@ -127,10 +127,122 @@ export const STREAMING_MODELS: readonly AnalysisModel[] =
  */
 export const OPENROUTER_MAX_FALLBACK_MODELS = 3;
 
-export const PRIMARY_ANALYSIS_MODEL = STREAMING_MODELS[0].id;
-export const FALLBACK_ANALYSIS_MODELS = STREAMING_MODELS
-  .slice(1, 1 + OPENROUTER_MAX_FALLBACK_MODELS)
-  .map((model) => model.id);
+const OPENROUTER_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+
+function normalizeModelId(value: string | undefined): string | undefined {
+  const candidate = value?.trim();
+  return candidate && OPENROUTER_MODEL_ID_PATTERN.test(candidate) ? candidate : undefined;
+}
+
+/**
+ * OPENROUTER_MODEL is the explicit primary model for short documents.
+ * Long documents still prefer the low-cost tier and only add this model as a
+ * later rescue option when its price is known, so cost telemetry stays honest.
+ */
+export const CONFIGURED_OPENROUTER_MODEL = normalizeModelId(process.env.OPENROUTER_MODEL);
+
+function configuredPrimaryModelEntry(): AnalysisModel | null {
+  const id = CONFIGURED_OPENROUTER_MODEL;
+  if (!id) return null;
+
+  const existing = [...FREE_MODELS, ...CHEAP_MODELS, ...RELIABLE_MODELS];
+  if (existing.some((model) => model.id === id)) return null;
+
+  // Keep the documented default's published OpenRouter price in the estimator.
+  // If the operator changes OPENROUTER_MODEL to another model, explicit price
+  // env vars are required before it is added to long-document costed routing.
+  const knownPrices: Record<string, { in: number; out: number }> = {
+    "openai/gpt-4.1-mini": { in: 0.4, out: 1.6 },
+  };
+  const inputPrice = process.env.OPENROUTER_MODEL_INPUT_USD_PER_MTOK?.trim();
+  const outputPrice = process.env.OPENROUTER_MODEL_OUTPUT_USD_PER_MTOK?.trim();
+  const explicitPrices = inputPrice && outputPrice
+    ? { in: Number(inputPrice), out: Number(outputPrice) }
+    : undefined;
+  const validExplicitPrices = explicitPrices
+    && Number.isFinite(explicitPrices.in) && explicitPrices.in >= 0
+    && Number.isFinite(explicitPrices.out) && explicitPrices.out >= 0
+    ? explicitPrices
+    : undefined;
+  const prices = knownPrices[id] ?? validExplicitPrices;
+
+  if (!prices) return null;
+
+  return {
+    id,
+    label: id.split("/").at(-1) ?? id,
+    tier: "andal",
+    usdPerMTok: prices,
+  };
+}
+
+const CONFIGURED_PRIMARY_MODEL_ENTRY = configuredPrimaryModelEntry();
+
+/** Sejauh mana lapis berbayar boleh dipakai:
+ * - `none`  : gratis saja; cocok untuk uji lokal tanpa mengaktifkan biaya provider.
+ * - `murah` : model gratis, lalu beberapa model berbayar murah, kemudian model utama terkonfigurasi sebagai penyelamat terakhir.
+ * - `andal` : menambahkan model penyelamat tambahan sebelum model utama terkonfigurasi.
+ */
+function resolvePaidTier(): ModelTier | "none" {
+  const raw = process.env.PAID_FALLBACK_TIER?.trim().toLowerCase();
+  if (raw === "none" || raw === "murah" || raw === "andal") return raw;
+  return "murah";
+}
+
+export const PAID_FALLBACK_TIER = resolvePaidTier();
+
+/** Lapis berbayar yang aktif, tersusun dari biaya rendah ke opsi penyelamat. */
+export const PAID_MODELS: readonly AnalysisModel[] =
+  PAID_FALLBACK_TIER === "none" ? []
+    : PAID_FALLBACK_TIER === "murah"
+      ? [...CHEAP_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])]
+      : [...CHEAP_MODELS, ...RELIABLE_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])];
+
+/**
+ * Seluruh model yang dapat dipakai, gratis lebih dulu. Dipakai skrip evaluasi
+ * untuk menguji setiap model sendiri-sendiri.
+ */
+export const ANALYSIS_MODELS: readonly AnalysisModel[] = [...FREE_MODELS, ...PAID_MODELS];
+
+export const FREE_ANALYSIS_MODELS = FREE_MODELS.map((model) => model.id);
+export const PAID_ANALYSIS_MODELS = PAID_MODELS.map((model) => model.id);
+
+export const STREAMING_MODELS: readonly AnalysisModel[] =
+  PAID_MODELS.length > 0 ? [...PAID_MODELS, ...FREE_MODELS] : FREE_MODELS;
+
+/**
+ * OpenRouter menerima paling banyak tiga model fallback pada opsi routing ini.
+ * Model utama terkonfigurasi tidak pernah diulang pada daftar fallback.
+ */
+export const OPENROUTER_MAX_FALLBACK_MODELS = 3;
+
+export const PRIMARY_ANALYSIS_MODEL = CONFIGURED_OPENROUTER_MODEL ?? STREAMING_MODELS[0].id;
+
+function resolveFallbackModelIds(): string[] {
+  const configured = process.env.OPENROUTER_FALLBACK_MODELS
+    ?.split(",")
+    .map((model) => model.trim())
+    .filter((model) => model.length > 0) ?? [];
+  const defaults = STREAMING_MODELS.map((model) => model.id)
+    .filter((id) => id !== PRIMARY_ANALYSIS_MODEL);
+  const candidates = [...configured, ...defaults];
+  const unique: string[] = [];
+
+  for (const candidate of candidates) {
+    if (
+      OPENROUTER_MODEL_ID_PATTERN.test(candidate)
+      && candidate !== PRIMARY_ANALYSIS_MODEL
+      && !unique.includes(candidate)
+    ) {
+      unique.push(candidate);
+    }
+    if (unique.length >= OPENROUTER_MAX_FALLBACK_MODELS) break;
+  }
+
+  return unique;
+}
+
+export const FALLBACK_ANALYSIS_MODELS = resolveFallbackModelIds();
 
 /**
  * Anggaran karakter dokumen untuk satu permintaan. Dipasang konservatif agar
