@@ -29,7 +29,7 @@ Buka `http://localhost:3000`, pilih **Gunakan Contoh**, centang persetujuan, lal
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Tidak | Client ID KontrakJelas | OAuth client untuk Google Identity Services. |
 | `PAID_FALLBACK_TIER` | Tidak | `andal` | Sejauh mana lapis berbayar menebus kegagalan lapis gratis: `none`, `murah`, atau `andal`. |
 | `ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `240` | Deadline dokumen panjang sebelum batas Vercel Fluid Compute. |
-| `SHORT_ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `90` | Deadline untuk streaming dokumen pendek. |
+| `SHORT_ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `90` | Deadline untuk analisis dokumen pendek. |
 | `PER_MODEL_TIMEOUT_SECONDS` | Tidak | `70` | Batas waktu satu model per bagian, agar model yang menggantung tidak memakan jatah model cadangan. |
 | `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `0` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. Gunakan `0` untuk langsung memakai model berbayar pada dokumen panjang. |
 | `EVALUATION_REQUEST_TIMEOUT_SECONDS` | Tidak | `45` | Deadline per model saat menjalankan evaluasi. |
