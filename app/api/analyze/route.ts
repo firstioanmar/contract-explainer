@@ -8,6 +8,7 @@ import { clearRejectedAnalysis } from "@/lib/ai/merge-analysis";
 import {
   FALLBACK_ANALYSIS_MODELS,
   MAX_OUTPUT_TOKENS,
+  OPENROUTER_MODEL_CONFIG_ERROR,
   PRIMARY_ANALYSIS_MODEL,
   SHORT_ANALYSIS_TIME_BUDGET_MS,
 } from "@/lib/ai/models";
@@ -124,9 +125,13 @@ export async function POST(request: Request) {
     );
   }
 
+  if (OPENROUTER_MODEL_CONFIG_ERROR) {
+    return jsonError("OPENROUTER_MODEL tidak valid. Gunakan format provider/model, misalnya openai/gpt-4.1-mini.", 503, headers);
+  }
+
   const apiKey = process.env.OPENROUTER_API_KEY?.trim();
   if (!apiKey) {
-    return jsonError("Layanan AI belum dikonfigurasi oleh administrator.", 503, headers);
+    return jsonError("Layanan AI belum dikonfigurasi oleh administrator. Tambahkan OPENROUTER_API_KEY di environment Vercel.", 503, headers);
   }
 
   let body: unknown;
