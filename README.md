@@ -27,11 +27,11 @@ Buka `http://localhost:3000`, pilih **Gunakan Contoh**, centang persetujuan, lal
 | `OPENROUTER_MODEL_INPUT_USD_PER_MTOK` / `OPENROUTER_MODEL_OUTPUT_USD_PER_MTOK` | Tidak | Harga model yang dikenal | Wajib diisi bersama jika memakai model utama kustom yang belum memiliki harga tercatat dan ingin memasukkannya ke router dokumen panjang. |
 | `AUTH_SECRET` | Production | fallback API key hanya saat lokal | Rahasia panjang khusus untuk menandatangani cookie sesi. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Tidak | Client ID KontrakJelas | OAuth client untuk Google Identity Services. |
-| `PAID_FALLBACK_TIER` | Tidak | `murah` | Sejauh mana lapis berbayar menebus kegagalan lapis gratis: `none`, `murah`, atau `andal`. |
+| `PAID_FALLBACK_TIER` | Tidak | `andal` | Sejauh mana lapis berbayar menebus kegagalan lapis gratis: `none`, `murah`, atau `andal`. |
 | `ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `240` | Deadline dokumen panjang sebelum batas Vercel Fluid Compute. |
 | `SHORT_ANALYSIS_TIME_BUDGET_SECONDS` | Tidak | `90` | Deadline untuk streaming dokumen pendek. |
 | `PER_MODEL_TIMEOUT_SECONDS` | Tidak | `70` | Batas waktu satu model per bagian, agar model yang menggantung tidak memakan jatah model cadangan. |
-| `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `2` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. Gunakan `0` untuk langsung memakai model berbayar pada dokumen panjang. |
+| `MAX_FREE_ATTEMPTS_PER_CHUNK` | Tidak | `0` | Berapa model gratis yang dicoba per bagian sebelum turun ke lapis berbayar. Gunakan `0` untuk langsung memakai model berbayar pada dokumen panjang. |
 | `EVALUATION_REQUEST_TIMEOUT_SECONDS` | Tidak | `45` | Deadline per model saat menjalankan evaluasi. |
 
 Key hanya dibaca oleh Route Handler dan tidak dikirim ke browser. Untuk model multi-tier, lihat [aturan routing OpenRouter dan document-grounding](docs/OPENROUTER_ROUTING_AND_RAG.md). Versi runtime yang didukung: Node.js 24 dan npm 11 atau lebih baru.
@@ -101,7 +101,7 @@ Catatan: GitHub menonaktifkan workflow terjadwal pada repo yang tidak ada aktivi
 
 ## Rantai model
 
-Analisis tidak bergantung pada satu model. Setiap bagian dokumen menempuh rantai berikut sampai ada yang berhasil:
+Analisis tidak bergantung pada satu model. Dokumen pendek memakai `OPENROUTER_MODEL` terlebih dahulu, sementara setiap bagian dokumen panjang memakai tier model berbiaya sampai ada yang berhasil:
 
 | Lapis | Model | Kapan dipakai | Biaya per bagian |
 |---|---|---|---:|
