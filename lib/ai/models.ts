@@ -89,7 +89,11 @@ function normalizeModelId(value: string | undefined): string | undefined {
   return candidate && OPENROUTER_MODEL_ID_PATTERN.test(candidate) ? candidate : undefined;
 }
 
-export const CONFIGURED_OPENROUTER_MODEL = normalizeModelId(process.env.OPENROUTER_MODEL);
+const RAW_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL?.trim();
+export const OPENROUTER_MODEL_CONFIG_ERROR = RAW_OPENROUTER_MODEL && !normalizeModelId(RAW_OPENROUTER_MODEL)
+  ? "OPENROUTER_MODEL harus memakai format provider/model yang valid."
+  : undefined;
+export const CONFIGURED_OPENROUTER_MODEL = normalizeModelId(RAW_OPENROUTER_MODEL);
 
 function configuredPrimaryModelEntry(): AnalysisModel | null {
   const id = CONFIGURED_OPENROUTER_MODEL;
