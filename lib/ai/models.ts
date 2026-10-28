@@ -271,8 +271,13 @@ export const MAX_FREE_ATTEMPTS_PER_CHUNK = Math.max(
 export function modelRotation(offset: number): AnalysisModel[] {
   const size = FREE_MODELS.length;
   const start = ((offset % size) + size) % size;
+  // "none" means free models only. Do not allow a zero paid-attempt setting
+  // to accidentally disable every model when the paid tier is explicitly off.
+  const freeAttemptLimit = PAID_MODELS.length === 0
+    ? FREE_MODELS.length
+    : MAX_FREE_ATTEMPTS_PER_CHUNK;
   const rotatedFree = Array.from(
-    { length: MAX_FREE_ATTEMPTS_PER_CHUNK },
+    { length: freeAttemptLimit },
     (_, step) => FREE_MODELS[(start + step) % size],
   );
   return [...rotatedFree, ...PAID_MODELS];
