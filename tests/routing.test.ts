@@ -100,7 +100,7 @@ test("nomor baris pada prompt memakai penomoran global dokumen", () => {
 });
 
 test("giliran model berputar dan tidak pernah mengulang model yang sama", () => {
-  const expected = MAX_FREE_ATTEMPTS_PER_CHUNK + PAID_MODELS.length;
+  const expected = (PAID_MODELS.length === 0 ? FREE_MODELS.length : MAX_FREE_ATTEMPTS_PER_CHUNK) + PAID_MODELS.length;
 
   for (let offset = 0; offset < ANALYSIS_MODELS.length + 2; offset += 1) {
     const rotation = modelRotation(offset);
