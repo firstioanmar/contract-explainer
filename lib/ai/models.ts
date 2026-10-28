@@ -78,55 +78,10 @@ export const RELIABLE_MODELS: readonly AnalysisModel[] = [
  * - `murah` : gratis lalu lapis murah. Default, karena biayanya hampir nol.
  * - `andal` : ditambah lapis terakhir. Dipakai bila keberhasilan lebih penting daripada biaya.
  */
-function resolvePaidTier(): ModelTier | "none" {
-  const raw = process.env.PAID_FALLBACK_TIER?.trim().toLowerCase();
-  if (raw === "none" || raw === "murah" || raw === "andal") return raw;
-  return "murah";
-}
-
-export const PAID_FALLBACK_TIER = resolvePaidTier();
-
-/** Lapis berbayar yang aktif, tersusun dari yang termurah. */
-export const PAID_MODELS: readonly AnalysisModel[] =
-  PAID_FALLBACK_TIER === "none" ? []
-    : PAID_FALLBACK_TIER === "murah" ? CHEAP_MODELS
-      : [...CHEAP_MODELS, ...RELIABLE_MODELS];
-
 /**
- * Seluruh model yang dapat dipakai, gratis lebih dulu. Dipakai skrip evaluasi
- * untuk menguji setiap model sendiri-sendiri.
+ * Model selection for short document analysis.
+ * OPENROUTER_MODEL wins when configured; the known-good list remains the fallback.
  */
-export const ANALYSIS_MODELS: readonly AnalysisModel[] = [...FREE_MODELS, ...PAID_MODELS];
-
-export const FREE_ANALYSIS_MODELS = FREE_MODELS.map((model) => model.id);
-export const PAID_ANALYSIS_MODELS = PAID_MODELS.map((model) => model.id);
-
-/**
- * Jalur dokumen pendek mengalirkan hasil token demi token, dan aliran yang sudah
- * terkirim tidak bisa ditarik kembali. Akibatnya kegagalan schema di jalur ini
- * tidak dapat ditebus model lain: pergantian model oleh OpenRouter hanya
- * menyala pada galat penyedia, sedangkan keluaran di luar schema baru ketahuan
- * setelah aliran selesai.
- *
- * Karena itu jalur ini dipimpin model yang terukur patuh schema dan selesai
- * dalam hitungan detik, bukan model gratis yang sering meleset. Dokumen pendek
- * memang jadi selalu berbayar, tetapi hanya sekitar USD 0,0006 sekali analisis,
- * dan pengguna mendapat hasil alih-alih pesan galat. Lapis gratis tetap
- * melayani dokumen panjang, tempat kegagalan masih bisa ditebus per bagian.
- *
- * Bila lapis berbayar dimatikan, jalur ini kembali memakai model gratis.
- */
-export const STREAMING_MODELS: readonly AnalysisModel[] =
-  PAID_MODELS.length > 0 ? [...PAID_MODELS, ...FREE_MODELS] : FREE_MODELS;
-
-/**
- * OpenRouter menolak permintaan yang daftar `models`-nya lebih dari tiga item,
- * dan penolakan itu muncul sebagai respons kosong ke pengguna, bukan pesan yang
- * bisa dibaca. Batas ini bagian dari kontrak API mereka, jadi daftar cadangan
- * dipotong di sini alih-alih dipercayakan pada disiplin saat menambah model.
- */
-export const OPENROUTER_MAX_FALLBACK_MODELS = 3;
-
 const OPENROUTER_MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 
 function normalizeModelId(value: string | undefined): string | undefined {
@@ -134,11 +89,6 @@ function normalizeModelId(value: string | undefined): string | undefined {
   return candidate && OPENROUTER_MODEL_ID_PATTERN.test(candidate) ? candidate : undefined;
 }
 
-/**
- * OPENROUTER_MODEL is the explicit primary model for short documents.
- * Long documents still prefer the low-cost tier and only add this model as a
- * later rescue option when its price is known, so cost telemetry stays honest.
- */
 export const CONFIGURED_OPENROUTER_MODEL = normalizeModelId(process.env.OPENROUTER_MODEL);
 
 function configuredPrimaryModelEntry(): AnalysisModel | null {
@@ -148,9 +98,8 @@ function configuredPrimaryModelEntry(): AnalysisModel | null {
   const existing = [...FREE_MODELS, ...CHEAP_MODELS, ...RELIABLE_MODELS];
   if (existing.some((model) => model.id === id)) return null;
 
-  // Keep the documented default's published OpenRouter price in the estimator.
-  // If the operator changes OPENROUTER_MODEL to another model, explicit price
-  // env vars are required before it is added to long-document costed routing.
+  // Known prices for the documented default. For other custom models, require
+  // explicit prices before using them in long-document routes with cost logging.
   const knownPrices: Record<string, { in: number; out: number }> = {
     "openai/gpt-4.1-mini": { in: 0.4, out: 1.6 },
   };
@@ -178,11 +127,6 @@ function configuredPrimaryModelEntry(): AnalysisModel | null {
 
 const CONFIGURED_PRIMARY_MODEL_ENTRY = configuredPrimaryModelEntry();
 
-/** Sejauh mana lapis berbayar boleh dipakai:
- * - `none`  : gratis saja; cocok untuk uji lokal tanpa mengaktifkan biaya provider.
- * - `murah` : model gratis, lalu beberapa model berbayar murah, kemudian model utama terkonfigurasi sebagai penyelamat terakhir.
- * - `andal` : menambahkan model penyelamat tambahan sebelum model utama terkonfigurasi.
- */
 function resolvePaidTier(): ModelTier | "none" {
   const raw = process.env.PAID_FALLBACK_TIER?.trim().toLowerCase();
   if (raw === "none" || raw === "murah" || raw === "andal") return raw;
@@ -191,29 +135,31 @@ function resolvePaidTier(): ModelTier | "none" {
 
 export const PAID_FALLBACK_TIER = resolvePaidTier();
 
-/** Lapis berbayar yang aktif, tersusun dari biaya rendah ke opsi penyelamat. */
-export const PAID_MODELS: readonly AnalysisModel[] =
-  PAID_FALLBACK_TIER === "none" ? []
-    : PAID_FALLBACK_TIER === "murah"
-      ? [...CHEAP_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])]
-      : [...CHEAP_MODELS, ...RELIABLE_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])];
+/** Berbayar murah lebih dulu; opsi andal dipakai hanya pada tier andal. */
+export const PAID_MODELS: readonly AnalysisModel[] = (() => {
+  if (PAID_FALLBACK_TIER === "none") return [];
 
-/**
- * Seluruh model yang dapat dipakai, gratis lebih dulu. Dipakai skrip evaluasi
- * untuk menguji setiap model sendiri-sendiri.
- */
+  const candidates = PAID_FALLBACK_TIER === "murah"
+    ? [...CHEAP_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])]
+    : [...CHEAP_MODELS, ...RELIABLE_MODELS, ...(CONFIGURED_PRIMARY_MODEL_ENTRY ? [CONFIGURED_PRIMARY_MODEL_ENTRY] : [])];
+
+  return candidates.filter((model, index) => candidates.findIndex((candidate) => candidate.id === model.id) === index);
+})();
+
+/** Daftar model aktif untuk evaluasi. */
 export const ANALYSIS_MODELS: readonly AnalysisModel[] = [...FREE_MODELS, ...PAID_MODELS];
 
 export const FREE_ANALYSIS_MODELS = FREE_MODELS.map((model) => model.id);
 export const PAID_ANALYSIS_MODELS = PAID_MODELS.map((model) => model.id);
 
+/**
+ * For short documents, the explicit environment model is primary.
+ * For long documents, modelRotation still uses the low-cost policy and retries.
+ */
 export const STREAMING_MODELS: readonly AnalysisModel[] =
   PAID_MODELS.length > 0 ? [...PAID_MODELS, ...FREE_MODELS] : FREE_MODELS;
 
-/**
- * OpenRouter menerima paling banyak tiga model fallback pada opsi routing ini.
- * Model utama terkonfigurasi tidak pernah diulang pada daftar fallback.
- */
+/** OpenRouter accepts at most three model fallbacks in this request shape. */
 export const OPENROUTER_MAX_FALLBACK_MODELS = 3;
 
 export const PRIMARY_ANALYSIS_MODEL = CONFIGURED_OPENROUTER_MODEL ?? STREAMING_MODELS[0].id;
